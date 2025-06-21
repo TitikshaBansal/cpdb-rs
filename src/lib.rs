@@ -10,3 +10,8 @@ pub mod frontend;
 pub mod backend;
 pub mod printer;
 pub mod job;
+
+// Re-export main types
+pub use frontend::Frontend;
+pub use printer::Printer;
+pub use job::PrintJob;
