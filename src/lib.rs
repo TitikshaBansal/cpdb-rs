@@ -3,9 +3,7 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-pub mod ffi {
-    include!(concat!(env!("OUT_DIR"), "/cpdb_sys.rs"));
-}
+pub mod ffi;
 
 pub mod error;
 pub mod frontend;
