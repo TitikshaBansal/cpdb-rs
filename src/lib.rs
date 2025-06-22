@@ -13,5 +13,7 @@ pub mod job;
 
 // Re-export main types
 pub use frontend::Frontend;
+pub use backend::Backend;
 pub use printer::Printer;
 pub use job::PrintJob;
+pub use error::{Result, CpdbError};

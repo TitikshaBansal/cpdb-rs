@@ -1,5 +1,5 @@
 use thiserror::Error;
-use std::ffi::CStr;
+use std::ffi::{CStr, NulError};
 
 #[derive(Error, Debug)]
 pub enum CpdbError {
@@ -19,8 +19,12 @@ pub enum CpdbError {
     CupsError(i32),
     #[error("Invalid UTF-8 string")]
     Utf8Error(#[from] std::str::Utf8Error),
+    #[error("String contains null byte")]
+    NulError(#[from] NulError),
     #[error("Unsupported operation")]
     Unsupported,
+    #[error("Channel communication error")]
+    ChannelError,
 }
 
 pub type Result<T> = std::result::Result<T, CpdbError>;
@@ -41,8 +45,9 @@ impl CpdbError {
         if ptr.is_null() {
             return Err(CpdbError::NullPointer);
         }
-        CStr::from_ptr(ptr)
-            .to_str()
+        // SAFETY: ptr is checked for null
+        let cstr = unsafe { CStr::from_ptr(ptr) };
+        cstr.to_str()
             .map(|s| s.to_string())
             .map_err(Into::into)
     }

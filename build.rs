@@ -39,7 +39,8 @@ fn main() {
         .allowlist_function("cpdb-.*")
         .allowlist_type("cpdb-.*")
         .size_t_is_usize(true)
-        .derive_default(true);
+        .derive_default(true)
+        .derive_debug(true);
 
     // Add include paths
     for path in &include_paths {
