@@ -4,17 +4,15 @@ use crate::printer::Printer;
 use std::ffi::CString;
 use std::ptr;
 
-/// Safe wrapper for CPDB backend
 pub struct Backend {
     raw: *mut ffi::cpdb_backend_obj_t,
 }
 
 impl Backend {
-    /// Create a new backend connection
     pub fn new(backend_name: &str) -> Result<Self> {
         let c_name = CString::new(backend_name)?;
         unsafe {
-            let raw = ffi::cpdb_get_new_backend_obj(c_name.as_ptr());
+            let raw = ffi::cpdbGetNewBackendObj(c_name.as_ptr());
             if raw.is_null() {
                 Err(CpdbError::BackendError("Failed to create backend".into()))
             } else {
@@ -23,11 +21,10 @@ impl Backend {
         }
     }
 
-    /// Get printer by name
     pub fn get_printer(&self, printer_name: &str) -> Result<Printer> {
         let c_name = CString::new(printer_name)?;
         unsafe {
-            let printer_ptr = ffi::cpdb_get_printer_from_backend(self.raw, c_name.as_ptr());
+            let printer_ptr = ffi::cpdbGetPrinterFromBackend(self.raw, c_name.as_ptr());
             if printer_ptr.is_null() {
                 Err(CpdbError::InvalidPrinter)
             } else {
@@ -36,7 +33,6 @@ impl Backend {
         }
     }
 
-    /// Submit print job directly through backend
     pub fn submit_job(
         &self,
         printer_name: &str,
@@ -44,7 +40,6 @@ impl Backend {
         options: &[(&str, &str)],
         job_name: &str,
     ) -> Result<()> {
-        // Create C-compatible options array
         let mut c_options = Vec::with_capacity(options.len());
         let mut keep_alive = Vec::new();
 
@@ -55,8 +50,8 @@ impl Backend {
             keep_alive.push(c_val);
             
             c_options.push(ffi::cpdb_option_t {
-                option_name: keep_alive[keep_alive.len()-2].as_ptr(),
-                default_value: keep_alive[keep_alive.len()-1].as_ptr(),
+                option_name: keep_alive[keep_alive.len()-2].as_ptr() as *mut i8,
+                default_value: keep_alive[keep_alive.len()-1].as_ptr() as *mut i8,
                 ..Default::default()
             });
         }
@@ -66,7 +61,7 @@ impl Backend {
             let c_file = CString::new(file_path)?;
             let c_job = CString::new(job_name)?;
             
-            let status = ffi::cpdb_submit_job(
+            let status = ffi::cpdbSubmitJob(
                 self.raw,
                 c_printer.as_ptr(),
                 c_file.as_ptr(),
@@ -88,7 +83,7 @@ impl Drop for Backend {
     fn drop(&mut self) {
         unsafe {
             if !self.raw.is_null() {
-                ffi::cpdb_delete_backend_obj(self.raw);
+                ffi::cpdbDeleteBackendObj(self.raw);
                 self.raw = ptr::null_mut();
             }
         }

@@ -9,7 +9,6 @@ pub struct PrintJob {
 }
 
 impl PrintJob {
-    /// Create a new print job
     pub fn new(
         printer: &crate::printer::Printer,
         options: &[(&str, &str)],
@@ -20,7 +19,6 @@ impl PrintJob {
         let file_cstr = CString::new(file_path)?;
         let job_cstr = CString::new(job_name)?;
         
-        // Create C-compatible options array
         let mut c_options = Vec::with_capacity(options.len());
         let mut keep_alive = Vec::new();
 
@@ -31,14 +29,14 @@ impl PrintJob {
             keep_alive.push(c_val);
             
             c_options.push(ffi::cpdb_option_t {
-                option_name: keep_alive[keep_alive.len()-2].as_ptr(),
-                default_value: keep_alive[keep_alive.len()-1].as_ptr(),
+                option_name: keep_alive[keep_alive.len()-2].as_ptr() as *mut i8,
+                default_value: keep_alive[keep_alive.len()-1].as_ptr() as *mut i8,
                 ..Default::default()
             });
         }
 
         unsafe {
-            let job = ffi::cpdb_new_print_job(
+            let job = ffi::cpdbNewPrintJob(
                 printer_name.as_ptr(),
                 c_options.as_ptr(),
                 c_options.len() as i32,
@@ -51,16 +49,15 @@ impl PrintJob {
             } else {
                 Ok(Self {
                     raw: job,
-                    id: -1, // Will be set after submission
+                    id: -1,
                 })
             }
         }
     }
 
-    /// Submit the print job
     pub fn submit(&mut self) -> Result<()> {
         unsafe {
-            let job_id = ffi::cpdb_submit_print_job(self.raw);
+            let job_id = ffi::cpdbSubmitPrintJob(self.raw);
             if job_id < 0 {
                 Err(CpdbError::JobFailed("Submission failed".into()))
             } else {
@@ -70,19 +67,17 @@ impl PrintJob {
         }
     }
 
-    /// Get job ID (only valid after submission)
     pub fn id(&self) -> Option<i32> {
         if self.id > 0 { Some(self.id) } else { None }
     }
 
-    /// Cancel the print job
     pub fn cancel(&mut self) -> Result<()> {
         unsafe {
             if !self.raw.is_null() {
                 if self.id > 0 {
-                    ffi::cpdb_cancel_job_by_id(self.id);
+                    ffi::cpdbCancelJobById(self.id);
                 }
-                ffi::cpdb_delete_print_job(self.raw);
+                ffi::cpdbDeletePrintJob(self.raw);
                 self.raw = ptr::null_mut();
                 self.id = -1;
                 Ok(())
