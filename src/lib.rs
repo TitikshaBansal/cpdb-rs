@@ -10,10 +10,10 @@ pub mod frontend;
 pub mod backend;
 pub mod printer;
 pub mod job;
+pub mod util;  // Add this line
 
 // Re-export main types
 pub use frontend::Frontend;
-pub use backend::Backend;
 pub use printer::Printer;
 pub use job::PrintJob;
-pub use error::{Result, CpdbError};
+pub use backend::Backend;

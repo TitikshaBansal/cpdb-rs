@@ -1,5 +1,6 @@
 use crate::error::{CpdbError, Result};
 use crate::ffi;
+use crate::util;
 use std::ffi::CString;
 use std::ptr;
 
@@ -10,39 +11,23 @@ pub struct PrintJob {
 
 impl PrintJob {
     pub fn new(
-        printer: &crate::printer::Printer,
+        printer_name: &str,
         options: &[(&str, &str)],
-        file_path: &str,
         job_name: &str,
     ) -> Result<Self> {
-        let printer_name = printer.name()?;
-        let file_cstr = CString::new(file_path)?;
-        let job_cstr = CString::new(job_name)?;
+        let c_printer_name = CString::new(printer_name)?;
+        let c_job_name = CString::new(job_name)?;
+        let c_options = util::to_c_options(options)?;
         
-        let mut c_options = Vec::with_capacity(options.len());
-        let mut keep_alive = Vec::new();
-
-        for (k, v) in options {
-            let c_key = CString::new(*k)?;
-            let c_val = CString::new(*v)?;
-            keep_alive.push(c_key);
-            keep_alive.push(c_val);
-            
-            c_options.push(ffi::cpdb_option_t {
-                option_name: keep_alive[keep_alive.len()-2].as_ptr() as *mut i8,
-                default_value: keep_alive[keep_alive.len()-1].as_ptr() as *mut i8,
-                ..Default::default()
-            });
-        }
-
         unsafe {
             let job = ffi::cpdbNewPrintJob(
-                printer_name.as_ptr(),
+                c_printer_name.as_ptr() as *mut i8,
                 c_options.as_ptr(),
                 c_options.len() as i32,
-                file_cstr.as_ptr(),
-                job_cstr.as_ptr(),
+                c_job_name.as_ptr() as *mut i8,
             );
+
+            util::free_c_options(c_options);
 
             if job.is_null() {
                 Err(CpdbError::JobFailed("Creation failed".into()))
@@ -55,9 +40,10 @@ impl PrintJob {
         }
     }
 
-    pub fn submit(&mut self) -> Result<()> {
+    pub fn submit_with_file(&mut self, file_path: &str) -> Result<()> {
+        let file_cstr = CString::new(file_path)?;
         unsafe {
-            let job_id = ffi::cpdbSubmitPrintJob(self.raw);
+            let job_id = ffi::cpdbSubmitPrintJobWithFile(self.raw, file_cstr.as_ptr());
             if job_id < 0 {
                 Err(CpdbError::JobFailed("Submission failed".into()))
             } else {

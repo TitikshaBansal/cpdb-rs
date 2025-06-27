@@ -1,4 +1,3 @@
-// build.rs
 extern crate bindgen;
 
 use std::env;
@@ -8,9 +7,11 @@ fn main() {
     // Get home directory
     let home_dir = env::var("HOME").expect("Could not find home directory");
     let cpdb_include_path = format!("{}/cpdb-libs/cpdb", home_dir);
-	
-    // Add linker search path
+    
+    // Add linker search paths
     println!("cargo:rustc-link-search=native={}/cpdb-libs/cpdb/.libs", home_dir);
+    println!("cargo:rustc-link-search=native=/usr/lib");
+    println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
     
     // Link libraries
     println!("cargo:rustc-link-lib=cpdb");
@@ -36,11 +37,8 @@ fn main() {
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .allowlist_function("cpdb_.*")
         .allowlist_type("cpdb_.*")
-        .allowlist_function("cpdb-.*")
-        .allowlist_type("cpdb-.*")
         .size_t_is_usize(true)
-        .derive_default(true)
-        .derive_debug(true);
+        .derive_default(true);
 
     // Add include paths
     for path in &include_paths {

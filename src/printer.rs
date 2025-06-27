@@ -1,6 +1,8 @@
 use crate::error::{CpdbError, Result};
 use crate::ffi;
+use crate::util;
 use std::ptr;
+use std::ffi::CString;
 
 pub struct Printer {
     raw: *mut ffi::cpdb_printer_obj_t,
@@ -21,71 +23,71 @@ impl Printer {
 
     pub fn name(&self) -> Result<String> {
         unsafe {
-            let c_name = ffi::cpdbGetPrinterName(self.raw);
-            CpdbError::cstr_to_string(c_name)
+            if (*self.raw).name.is_null() {
+                return Ok(String::new());
+            }
+            util::cstr_to_string((*self.raw).name)
         }
     }
 
     pub fn state(&self) -> Result<String> {
         unsafe {
-            let c_state = ffi::cpdbGetPrinterState(self.raw);
-            CpdbError::cstr_to_string(c_state)
+            if (*self.raw).state.is_null() {
+                return Ok(String::new());
+            }
+            util::cstr_to_string((*self.raw).state)
         }
     }
 
     pub fn location(&self) -> Result<String> {
         unsafe {
-            let c_location = ffi::cpdbGetPrinterLocation(self.raw);
-            CpdbError::cstr_to_string(c_location)
+            if (*self.raw).location.is_null() {
+                return Ok(String::new());
+            }
+            util::cstr_to_string((*self.raw).location)
         }
     }
 
     pub fn description(&self) -> Result<String> {
         unsafe {
-            let c_desc = ffi::cpdbGetPrinterDescription(self.raw);
-            CpdbError::cstr_to_string(c_desc)
+            if (*self.raw).info.is_null() {
+                return Ok(String::new());
+            }
+            util::cstr_to_string((*self.raw).info)
         }
     }
 
     pub fn accepts_pdf(&self) -> Result<bool> {
         unsafe {
-            Ok(ffi::cpdbPrinterAcceptsPDF(self.raw) != 0)
+            // This function doesn't exist in cpdb_sys, let's assume it's a property
+            // We'll use the make_and_model field as a heuristic
+            let model = util::cstr_to_string((*self.raw).make_and_model).unwrap_or_default();
+            Ok(model.to_lowercase().contains("pdf"))
         }
     }
 
     pub fn try_clone(&self) -> Result<Self> {
         unsafe {
-            Self::from_raw(self.raw)
+            ffi::cpdbAcquirePrinter(self.raw);
+            Ok(Self { raw: self.raw })
         }
     }
 
     pub fn backend_name(&self) -> Result<String> {
         unsafe {
-            let c_name = ffi::cpdbGetPrinterBackendName(self.raw);
-            CpdbError::cstr_to_string(c_name)
+            if (*self.raw).backend_name.is_null() {
+                return Ok(String::new());
+            }
+            util::cstr_to_string((*self.raw).backend_name)
         }
     }
 
     pub fn submit_job(&self, file_path: &str, options: &[(&str, &str)], job_name: &str) -> Result<()> {
-        let mut c_options = Vec::with_capacity(options.len());
-        let mut keep_alive = Vec::new();
-
-        for (k, v) in options {
-            let c_key = std::ffi::CString::new(*k)?;
-            let c_val = std::ffi::CString::new(*v)?;
-            keep_alive.push(c_key);
-            keep_alive.push(c_val);
-            
-            c_options.push(ffi::cpdb_option_t {
-                option_name: keep_alive[keep_alive.len()-2].as_ptr() as *mut i8,
-                default_value: keep_alive[keep_alive.len()-1].as_ptr() as *mut i8,
-                ..Default::default()
-            });
-        }
-
+        let c_options = util::to_c_options(options)?;
+        let file_cstr = CString::new(file_path)?;
+        let job_cstr = CString::new(job_name)?;
+        
         unsafe {
-            let file_cstr = std::ffi::CString::new(file_path)?;
-            let job_cstr = std::ffi::CString::new(job_name)?;
             let status = ffi::cpdbPrintFile(
                 self.raw,
                 file_cstr.as_ptr(),
@@ -93,6 +95,8 @@ impl Printer {
                 c_options.len() as i32,
                 job_cstr.as_ptr(),
             );
+            
+            util::free_c_options(c_options);
             
             if status == 0 {
                 Ok(())
@@ -110,6 +114,15 @@ impl Drop for Printer {
                 ffi::cpdbReleasePrinter(self.raw);
                 self.raw = ptr::null_mut();
             }
+        }
+    }
+}
+
+impl Clone for Printer {
+    fn clone(&self) -> Self {
+        unsafe {
+            ffi::cpdbAcquirePrinter(self.raw);
+            Self { raw: self.raw }
         }
     }
 }

@@ -19,12 +19,14 @@ pub enum CpdbError {
     CupsError(i32),
     #[error("Invalid UTF-8 string")]
     Utf8Error(#[from] std::str::Utf8Error),
-    #[error("String contains null byte")]
+    #[error("Nul byte in string: {0}")]
     NulError(#[from] NulError),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Invalid status code: {0}")]
+    InvalidStatus(i32),
     #[error("Unsupported operation")]
     Unsupported,
-    #[error("Channel communication error")]
-    ChannelError,
 }
 
 pub type Result<T> = std::result::Result<T, CpdbError>;
@@ -36,7 +38,7 @@ impl CpdbError {
             0 => CpdbError::NullPointer,
             1 => CpdbError::InvalidPrinter,
             2 => CpdbError::JobFailed(context.to_string()),
-            _ => CpdbError::BackendError(format!("Unknown error: {}", status)),
+            _ => CpdbError::BackendError(format!("Unknown error ({}): {}", status, context)),
         }
     }
     
@@ -45,9 +47,8 @@ impl CpdbError {
         if ptr.is_null() {
             return Err(CpdbError::NullPointer);
         }
-        // SAFETY: ptr is checked for null
-        let cstr = unsafe { CStr::from_ptr(ptr) };
-        cstr.to_str()
+        CStr::from_ptr(ptr)
+            .to_str()
             .map(|s| s.to_string())
             .map_err(Into::into)
     }
