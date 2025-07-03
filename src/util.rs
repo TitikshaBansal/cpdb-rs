@@ -2,6 +2,7 @@ use crate::error::CpdbError;
 use crate::ffi;
 use std::ffi::{CString, CStr};
 use std::os::raw::c_char;
+use libc::{c_char, c_void};
 
 pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String, CpdbError> {
     if ptr.is_null() {
@@ -44,4 +45,18 @@ pub unsafe fn free_c_options(options: Vec<ffi::cpdb_option_t>) {
             let _ = CString::from_raw(opt.default_value);
         }
     }
+}
+
+pub unsafe fn cstr_to_string_and_g_free(c_ptr: *mut c_char) -> Result<String, CpdbError> {
+    if c_ptr.is_null() {
+        return Err(CpdbError::NullPointer);
+    }
+    let result = CStr::from_ptr(c_ptr)
+        .to_str()
+        .map(|s| s.to_string())
+        .map_err(CpdbError::from);
+    
+    ffi::g_free(c_ptr as *mut c_void);
+    
+    result
 }
