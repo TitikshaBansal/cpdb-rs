@@ -6,13 +6,15 @@
 pub mod ffi;
 
 pub mod error;
+pub mod common; // Added common module
 pub mod frontend;
 pub mod backend;
 pub mod printer;
 pub mod job;
-pub mod util;  // Add this line
+pub mod util;
 
 // Re-export main types
+pub use common::{init, version}; // Re-export init and version
 pub use frontend::Frontend;
 pub use printer::Printer;
 pub use job::PrintJob;
