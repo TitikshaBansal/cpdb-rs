@@ -57,7 +57,7 @@ impl Printer {
     /// Fetches and returns the printer's current state by calling `cpdbGetState`.
     pub fn get_updated_state(&self) -> Result<String> {
         if self.raw.is_null() {
-            return Err(CpdbError::InvalidPrinter{ reason: "Printer object pointer is null".to_string() });
+            return Err(CpdbError::BackendError("Printer object pointer is null".to_string()));
         }
         unsafe {
             let c_state_ptr = ffi::cpdbGetState(self.raw);
@@ -73,7 +73,7 @@ impl Printer {
     /// Checks if the printer is currently accepting print jobs by calling `cpdbIsAcceptingJobs`.
     pub fn is_accepting_jobs(&self) -> Result<bool> {
         if self.raw.is_null() {
-            return Err(CpdbError::InvalidPrinter{ reason: "Printer object pointer is null".to_string() });
+            return Err(CpdbError::BackendError("Printer object pointer is null".to_string()));
         }
         unsafe {
             let accepting = ffi::cpdbIsAcceptingJobs(self.raw);
@@ -85,13 +85,13 @@ impl Printer {
     /// Returns a Job ID string if successful.
     pub fn print_single_file(&self, file_path: &str) -> Result<String> {
         if self.raw.is_null() {
-            return Err(CpdbError::InvalidPrinter{ reason: "Printer object pointer is null".to_string() });
+            return Err(CpdbError::BackendError("Printer object pointer is null".to_string()));
         }
         let c_file_path = CString::new(file_path)?;
         unsafe {
             let job_id_ptr = ffi::cpdbPrintFile(self.raw, c_file_path.as_ptr());
             if job_id_ptr.is_null() {
-                return Err(CpdbError::JobFailed { message: "cpdbPrintFile returned null, failed to submit job".to_string() });
+                return Err(CpdbError::BackendError("cpdbPrintFile returned null, failed to submit job".to_string()));
             }
             let result = CStr::from_ptr(job_id_ptr).to_str().map(|s| s.to_string()).map_err(CpdbError::from);
             ffi::g_free(job_id_ptr as *mut libc::c_void); 
@@ -105,7 +105,7 @@ impl Printer {
         F: FnOnce(*mut ffi::cpdb_printer_obj_t) -> *const libc::c_char,
     {
         if self.raw.is_null() {
-            return Err(CpdbError::InvalidPrinter{ reason: format!("Printer object pointer is null when accessing {}", field_name_for_error) });
+            return Err(CpdbError::BackendError("Printer object pointer is null when accessing file".to_string()));
         }
         unsafe {
             let c_ptr = field_accessor(self.raw);
@@ -127,7 +127,7 @@ impl Printer {
 
     pub fn submit_job(&self, file_path: &str, options: &[(&str, &str)], job_name: &str) -> Result<()> {
         if self.raw.is_null() {
-            return Err(CpdbError::InvalidPrinter{ reason: "Printer object pointer is null".to_string() });
+            return Err(CpdbError::BackendError("Printer object pointer is null".to_string()));
         }
         let c_options = util::to_c_options(options)?;
         let file_cstr = CString::new(file_path)?;
@@ -154,7 +154,7 @@ impl Printer {
 
     pub fn try_clone(&self) -> Result<Self> {
         if self.raw.is_null() {
-            return Err(CpdbError::InvalidPrinter{ reason: "Cannot clone null printer object".to_string()});
+            return Err(CpdbError::BackendError("Cannot clone null printer object".to_string()));
         }
         if cfg!(feature = "refcounted_printer") {
              unsafe { ffi::cpdbAcquirePrinter(self.raw); }
