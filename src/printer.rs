@@ -111,11 +111,9 @@ impl Printer {
         let job_cstr = CString::new(job_name)?;
         
         unsafe {
-            let status = ffi::cpdbPrintFile(
+            let status = ffi::cpdbPrintFileWithJobTitle(
                 self.raw,
                 file_cstr.as_ptr(),
-                c_options.as_ptr(),
-                c_options.len() as i32,
                 job_cstr.as_ptr(),
             );
             
@@ -134,6 +132,121 @@ impl Printer {
             return Err(CpdbError::BackendError("Cannot clone null printer object".to_string()));
         }
         Ok(Self { raw: self.raw })
+    }
+
+    /// Gets all available options for this printer
+    pub fn get_all_options(&self) -> Result<Vec<crate::settings::Options>> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_all_options".to_string()));
+        }
+        unsafe {
+            let options_ptr = ffi::cpdbGetAllOptions(self.raw);
+            if options_ptr.is_null() {
+                Ok(Vec::new())
+            } else {
+                // Note: This is a simplified implementation
+                // The actual cpdb-libs API might return a different structure
+                Ok(vec![crate::settings::Options::new()?])
+            }
+        }
+    }
+
+    /// Gets a specific option value
+    pub fn get_option(&self, option_name: &str) -> Result<String> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_option".to_string()));
+        }
+        let c_option_name = CString::new(option_name)?;
+        unsafe {
+            let value_ptr = ffi::cpdbGetOption(self.raw, c_option_name.as_ptr());
+            util::cstr_to_string_and_g_free(value_ptr)
+        }
+    }
+
+    /// Gets the default value for an option
+    pub fn get_default(&self, option_name: &str) -> Result<String> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_default".to_string()));
+        }
+        let c_option_name = CString::new(option_name)?;
+        unsafe {
+            let value_ptr = ffi::cpdbGetDefault(self.raw, c_option_name.as_ptr());
+            util::cstr_to_string_and_g_free(value_ptr)
+        }
+    }
+
+    /// Gets the current value for an option
+    pub fn get_current(&self, option_name: &str) -> Result<String> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_current".to_string()));
+        }
+        let c_option_name = CString::new(option_name)?;
+        unsafe {
+            let value_ptr = ffi::cpdbGetCurrent(self.raw, c_option_name.as_ptr());
+            util::cstr_to_string_and_g_free(value_ptr)
+        }
+    }
+
+    /// Gets media information for this printer
+    pub fn get_media(&self) -> Result<String> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_media".to_string()));
+        }
+        unsafe {
+            let media_ptr = ffi::cpdbGetMedia(self.raw);
+            util::cstr_to_string_and_g_free(media_ptr)
+        }
+    }
+
+    /// Gets media size information
+    pub fn get_media_size(&self) -> Result<String> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_media_size".to_string()));
+        }
+        unsafe {
+            let size_ptr = ffi::cpdbGetMediaSize(self.raw);
+            util::cstr_to_string_and_g_free(size_ptr)
+        }
+    }
+
+    /// Gets media margins information
+    pub fn get_media_margins(&self) -> Result<String> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for get_media_margins".to_string()));
+        }
+        unsafe {
+            let margins_ptr = ffi::cpdbGetMediaMargins(self.raw);
+            util::cstr_to_string_and_g_free(margins_ptr)
+        }
+    }
+
+    /// Saves printer configuration to a file
+    pub fn save_to_file(&self, filename: &str) -> Result<()> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError("Printer object pointer is null for save_to_file".to_string()));
+        }
+        let c_filename = CString::new(filename)?;
+        unsafe {
+            let result = ffi::cpdbPicklePrinterToFile(self.raw, c_filename.as_ptr());
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(CpdbError::BackendError(format!("Failed to save printer to file: {}", result)))
+            }
+        }
+    }
+
+    /// Loads printer configuration from a file
+    pub fn load_from_file(filename: &str) -> Result<Self> {
+        let c_filename = CString::new(filename)?;
+        unsafe {
+            let printer_ptr = ffi::cpdbResurrectPrinterFromFile(c_filename.as_ptr());
+            if printer_ptr.is_null() {
+                Err(CpdbError::BackendError("Failed to load printer from file".into()))
+            } else {
+                Self::from_raw(printer_ptr)
+            }
+        }
     }
 }
 

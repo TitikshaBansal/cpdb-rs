@@ -21,10 +21,10 @@ impl PrintJob {
         
         unsafe {
             let job = ffi::cpdbNewPrintJob(
-                c_printer_name.as_ptr() as *mut i8,
+                c_printer_name.as_ptr(),
                 c_options.as_ptr(),
                 c_options.len() as i32,
-                c_job_name.as_ptr() as *mut i8,
+                c_job_name.as_ptr(),
             );
 
             util::free_c_options(c_options);

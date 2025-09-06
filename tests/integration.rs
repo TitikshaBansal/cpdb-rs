@@ -36,9 +36,8 @@ mod tests {
         
         if let Some(printer) = printers.first() {
             let file_path = create_test_file();
-            let options = util::to_c_options(&[("copies", "1")]).unwrap();
-            let result = printer.submit_job(&file_path, &options, "Test Job");
-            unsafe { util::free_c_options(options) };
+            let options = &[("copies", "1")];
+            let result = printer.submit_job(&file_path, options, "Test Job");
             assert!(result.is_ok(), "Job submission failed: {:?}", result);
         }
     }
@@ -50,9 +49,8 @@ mod tests {
         
         if let Some(printer) = printers.first() {
             let printer_name = printer.name().unwrap();
-            let options = util::to_c_options(&[("copies", "1")]).unwrap();
-            let mut job = PrintJob::new(&printer_name, &options, "Test Job").unwrap();
-            unsafe { util::free_c_options(options) };
+            let options = &[("copies", "1")];
+            let mut job = PrintJob::new(&printer_name, options, "Test Job").unwrap();
             
             let file_path = create_test_file();
             assert!(job.submit_with_file(&file_path).is_ok());
