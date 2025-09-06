@@ -11,7 +11,7 @@ fn main() {
     let cpdb_libs_path = find_cpdb_libs();
     
     // --- Linker Configuration ---
-    if let Some(cpdb_path) = cpdb_libs_path {
+    if let Some(ref cpdb_path) = cpdb_libs_path {
         println!("cargo:rustc-link-search=native={}/cpdb/.libs", cpdb_path);
         println!("cargo:rustc-link-search=native={}/.libs", cpdb_path);
     }
@@ -173,7 +173,7 @@ fn find_cpdb_libs() -> Option<String> {
     
     for path in &common_paths {
         if std::path::Path::new(path).exists() {
-            return Some(path.clone());
+            return Some(path.to_string());
         }
     }
     
