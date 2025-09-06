@@ -163,12 +163,14 @@ fn find_cpdb_libs() -> Option<String> {
     
     // Try common installation paths
     let home_dir = env::var("HOME").unwrap_or_default();
+    let cpdb_home_path = format!("{}/cpdb-libs", home_dir);
+    let cpdb_local_path = format!("{}/.local/lib/cpdb-libs", home_dir);
     let common_paths = [
         "/usr/local/lib/cpdb-libs",
         "/usr/lib/cpdb-libs", 
         "/opt/cpdb-libs",
-        format!("{}/cpdb-libs", home_dir),
-        format!("{}/.local/lib/cpdb-libs", home_dir),
+        cpdb_home_path.as_str(),
+        cpdb_local_path.as_str(),
     ];
     
     for path in &common_paths {
