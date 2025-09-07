@@ -99,9 +99,14 @@ jobs:
         run: |
           brew update
           brew install pkg-config glib || true
-      - name: Provide cpdb headers for bindgen
+      - name: Build cpdb-libs (generate headers for bindgen)
         run: |
           git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
+          cd ~/cpdb-libs
+          ./autogen.sh || autoreconf -fi
+          ./configure --prefix=/usr/local
+          make -j"$(sysctl -n hw.ncpu)"
+          cd -
           echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
       - name: Build library only
         run: cargo build --lib --verbose
