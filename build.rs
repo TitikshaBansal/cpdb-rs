@@ -78,7 +78,7 @@ fn main() {
         // Frontend functions
         "cpdbGetNewFrontendObj", "cpdbConnectToDBus", "cpdbDisconnectFromDBus",
         "cpdbStartListingPrinters", "cpdbStopListingPrinters", "cpdbDeleteFrontendObj",
-        "cpdbGetPrinters", "cpdbGetPrinter", "cpdbGetAllPrinters",
+        "cpdbGetPrinters", /* "cpdbGetPrinter", */ "cpdbGetAllPrinters",
         "cpdbFindPrinterObj", "cpdbGetDefaultPrinter", "cpdbGetDefaultPrinterForBackend",
         "cpdbSetUserDefaultPrinter", "cpdbSetSystemDefaultPrinter",
         "cpdbAddPrinter", "cpdbRemovePrinter",
