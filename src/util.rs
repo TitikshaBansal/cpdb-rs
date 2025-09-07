@@ -4,7 +4,7 @@ use libc::{c_char, c_void}; // Use libc's c_char
 use std::ffi::{CString, CStr};
 use glib_sys; // For g_free
 
-pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String, CpdbError> {
+pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String> {
     if ptr.is_null() {
         return Err(CpdbError::NullPointer);
     }
@@ -15,7 +15,7 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String, CpdbError> {
     }
 }
 
-pub unsafe fn cstr_to_string_and_g_free(c_ptr: *mut c_char) -> Result<String, CpdbError> {
+pub unsafe fn cstr_to_string_and_g_free(c_ptr: *mut c_char) -> Result<String> {
     if c_ptr.is_null() {
         return Err(CpdbError::NullPointer);
     }
@@ -32,7 +32,7 @@ pub unsafe fn cstr_to_string_and_g_free(c_ptr: *mut c_char) -> Result<String, Cp
 
 pub fn to_c_options(
     options: &[(&str, &str)]
-) -> Result<Vec<ffi::cpdb_option_t>, CpdbError> {
+) -> Result<Vec<ffi::cpdb_option_t>> {
     let mut c_options = Vec::with_capacity(options.len());
     let mut cstring_holder: Vec<CString> = Vec::new(); 
 

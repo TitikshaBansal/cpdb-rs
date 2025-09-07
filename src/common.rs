@@ -8,7 +8,7 @@ pub fn version() -> Result<String> {
         if c_ptr.is_null() {
             return Err(CpdbError::NullPointer);
         }
-        let version_str = unsafe { CStr::from_ptr(c_ptr).to_str()?.to_string() };
+        let version_str = CStr::from_ptr(c_ptr).to_str()?.to_string();
         Ok(version_str)
     }
 }

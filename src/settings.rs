@@ -1,7 +1,6 @@
 use crate::error::{CpdbError, Result};
 use crate::ffi;
-use crate::util;
-use std::ffi::{CString, CStr};
+use std::ffi::CString;
 use std::ptr;
 
 /// Represents printer settings/options in a safe Rust wrapper
@@ -31,10 +30,11 @@ impl Settings {
             return Err(CpdbError::NullPointer);
         }
         unsafe {
-            let copy_raw = ffi::cpdbCopySettings(self.raw);
+            let copy_raw = ffi::cpdbGetNewSettings();
             if copy_raw.is_null() {
-                Err(CpdbError::BackendError("Failed to copy settings".into()))
+                Err(CpdbError::BackendError("Failed to create new settings for copy".into()))
             } else {
+                ffi::cpdbCopySettings(self.raw, copy_raw);
                 Ok(Self { raw: copy_raw })
             }
         }
@@ -83,28 +83,22 @@ impl Settings {
     }
 
     /// Saves settings to disk
-    pub fn save_to_disk(&self, filename: &str) -> Result<()> {
+    pub fn save_to_disk(&self) -> Result<()> {
         if self.raw.is_null() {
             return Err(CpdbError::NullPointer);
         }
-        let c_filename = CString::new(filename)?;
         
         unsafe {
-            let result = ffi::cpdbSaveSettingsToDisk(self.raw, c_filename.as_ptr());
-            if result == 0 {
-                Ok(())
-            } else {
-                Err(CpdbError::BackendError(format!("Failed to save settings to disk: {}", result)))
-            }
+            ffi::cpdbSaveSettingsToDisk(self.raw);
+            // cpdbSaveSettingsToDisk returns void, so we assume success
+            Ok(())
         }
     }
 
     /// Reads settings from disk
-    pub fn read_from_disk(filename: &str) -> Result<Self> {
-        let c_filename = CString::new(filename)?;
-        
+    pub fn read_from_disk() -> Result<Self> {
         unsafe {
-            let raw = ffi::cpdbReadSettingsFromDisk(c_filename.as_ptr());
+            let raw = ffi::cpdbReadSettingsFromDisk();
             if raw.is_null() {
                 Err(CpdbError::BackendError("Failed to read settings from disk".into()))
             } else {
