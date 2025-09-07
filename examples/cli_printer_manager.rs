@@ -1,8 +1,7 @@
-use cpdb_rs::{init, version, Frontend, Printer, Settings};
-use cpdb_rs::error::CpdbError;
+use cpdb_rs::{init, version, Frontend, Printer};
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io; // retained if future interactive features are added
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🖨️  CPDB Rust CLI Printer Manager");
@@ -71,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {
             eprintln!("Unknown command: {}", args[1]);
             print_usage();
+            Ok(())
         }
     }
 }
@@ -217,18 +217,24 @@ fn show_printer_media(printer_name: &str) -> Result<(), Box<dyn std::error::Erro
     let printer = frontend.get_printer(printer_name)?;
     
     println!("📋 Media Information:");
-    
-    match printer.get_media() {
+
+    // Try to detect current media from printer options; fall back to a common name if unavailable
+    let media_name = printer
+        .get_current("media")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "iso_a4_210x297mm".to_string());
+    println!("  Using media: {}", media_name);
+
+    match printer.get_media(&media_name) {
         Ok(media) => println!("  Media: {}", media),
         Err(_) => println!("  Media: Not available"),
     }
-    
-    match printer.get_media_size() {
-        Ok(size) => println!("  Size: {}", size),
+    match printer.get_media_size(&media_name) {
+        Ok(size) => println!("  Size: {:?}", size),
         Err(_) => println!("  Size: Not available"),
     }
-    
-    match printer.get_media_margins() {
+    match printer.get_media_margins(&media_name) {
         Ok(margins) => println!("  Margins: {}", margins),
         Err(_) => println!("  Margins: Not available"),
     }
@@ -244,7 +250,7 @@ fn save_printer_config(printer_name: &str, config_file: &str) -> Result<(), Box<
     
     let printer = frontend.get_printer(printer_name)?;
     
-    match printer.save_to_file(config_file) {
+    match printer.save_to_file(config_file, &frontend) {
         Ok(_) => println!("✓ Printer configuration saved successfully"),
         Err(e) => eprintln!("✗ Failed to save configuration: {}", e),
     }

@@ -22,7 +22,9 @@ fn main() {
     // Link required libraries
     println!("cargo:rustc-link-lib=cpdb");
     println!("cargo:rustc-link-lib=cpdb-frontend");
-    println!("cargo:rustc-link-lib=cpdb-backend");
+    if matches!(env::var("CPDB_LINK_BACKEND").ok().as_deref(), Some("1") | Some("true") | Some("yes")) {
+        println!("cargo:rustc-link-lib=cpdb-backend");
+    }
     println!("cargo:rustc-link-lib=glib-2.0");
     println!("cargo:rustc-link-lib=gobject-2.0");
 

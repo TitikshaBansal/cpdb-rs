@@ -1,6 +1,4 @@
-use cpdb_rs::{init, version, Frontend, Printer};
-use cpdb_rs::error::CpdbError;
-use std::ptr;
+use cpdb_rs::{init, version, Frontend};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- CPDB Rust Bindings Manual Test ---");
