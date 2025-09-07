@@ -1,7 +1,7 @@
 use cpdb_rs::{init, version, Frontend, Printer};
 use std::env;
 use std::fs;
-use std::io; // retained if future interactive features are added
+// use std::io; // retained if future interactive features are added
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🖨️  CPDB Rust CLI Printer Manager");
