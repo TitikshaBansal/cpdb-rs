@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config autoconf automake libtool gettext \
+            build-essential pkg-config autoconf automake libtool libtool-bin gettext autopoint \
             libglib2.0-dev libdbus-1-dev \
             libcups2-dev cups \
             libavahi-common-dev libavahi-client-dev \
@@ -61,10 +61,17 @@ jobs:
       - name: Install headers for bindgen
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglib2.0-dev
-      - name: Prepare cpdb headers
+          sudo apt-get install -y libglib2.0-dev build-essential pkg-config autoconf automake libtool libtool-bin gettext autopoint
+      - name: Build and install cpdb-libs (for headers)
         run: |
           git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
+          cd ~/cpdb-libs
+          ./autogen.sh || autoreconf -fi
+          ./configure --prefix=/usr
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+          cd -
           echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
       - name: Docs
         env:
@@ -88,6 +95,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install pkg-config glib || true
+      - name: Provide cpdb headers for bindgen
+        run: |
+          git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
+          echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
       - name: Build library only
         run: cargo build --lib --verbose
       # Skip docs on macOS to avoid bindgen header requirements

@@ -14,6 +14,9 @@ fn main() {
     if let Some(ref cpdb_path) = cpdb_libs_path {
         println!("cargo:rustc-link-search=native={}/cpdb/.libs", cpdb_path);
         println!("cargo:rustc-link-search=native={}/.libs", cpdb_path);
+        // Also add cpdb subdir to include search for transitive headers
+        println!("cargo:include={}", cpdb_path);
+        println!("cargo:include={}/cpdb", cpdb_path);
     }
     
     // Add common system library paths
@@ -46,12 +49,14 @@ fn main() {
     // Add include paths
     if let Some(ref cpdb_path) = cpdb_libs_path {
         builder = builder.clang_arg(format!("-I{}", cpdb_path));
+        builder = builder.clang_arg(format!("-I{}/cpdb", cpdb_path));
         println!("Using cpdb-libs include path for bindgen: {}", cpdb_path);
     } else {
         // Fallback to common paths
         let home_dir = env::var("HOME").unwrap_or_default();
         let cpdb_libs_project_root_for_includes = format!("{}/cpdb-libs", home_dir);
         builder = builder.clang_arg(format!("-I{}", cpdb_libs_project_root_for_includes));
+        builder = builder.clang_arg(format!("-I{}/cpdb", cpdb_libs_project_root_for_includes));
         println!("Using fallback cpdb-libs include path for bindgen: {}", cpdb_libs_project_root_for_includes);
     }
 
