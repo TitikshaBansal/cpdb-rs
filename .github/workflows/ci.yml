@@ -108,15 +108,14 @@ jobs:
           cd ~/cpdb-libs
           ./autogen.sh || autoreconf -fi
           ./configure --prefix=/usr/local
-          make -j"$(sysctl -n hw.ncpu)" libcpdb.la
+          make -C cpdb -j"$(sysctl -n hw.ncpu)"
           cd -
           echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$HOME/cpdb-libs -I$HOME/cpdb-libs/cpdb" >> $GITHUB_ENV
       - name: Build library only
-        env:
-          CPATH: ${{ env.HOME }}/cpdb-libs:${{ env.HOME }}/cpdb-libs/cpdb
-          C_INCLUDE_PATH: ${{ env.HOME }}/cpdb-libs:${{ env.HOME }}/cpdb-libs/cpdb
-          BINDGEN_EXTRA_CLANG_ARGS: -I${{ env.HOME }}/cpdb-libs -I${{ env.HOME }}/cpdb-libs/cpdb
         run: |
+          export CPATH="$HOME/cpdb-libs:$HOME/cpdb-libs/cpdb"
+          export C_INCLUDE_PATH="$HOME/cpdb-libs:$HOME/cpdb-libs/cpdb"
           echo "Using CPATH=$CPATH"
           echo "Using BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
           cargo build --lib --verbose
