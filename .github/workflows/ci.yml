@@ -102,6 +102,9 @@ jobs:
           # Ensure autopoint (from gettext) is on PATH for autoreconf
           echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH || true
           echo "/usr/local/opt/gettext/bin" >> $GITHUB_PATH || true
+          # Ensure brew bin dirs are on PATH for autoreconf, aclocal, libtoolize
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH || true
+          echo "/usr/local/bin" >> $GITHUB_PATH || true
       - name: Prepare cpdb-libs headers for bindgen
         run: |
           if brew --prefix cpdb-libs >/dev/null 2>&1; then
@@ -112,6 +115,9 @@ jobs:
           else
             git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
             cd ~/cpdb-libs
+            echo "PATH before autoreconf: $PATH"
+            which autoreconf || true
+            which aclocal || true
             ./autogen.sh || autoreconf -fi
             ./configure --prefix=/usr/local
             # Build only headers-producing parts if any; otherwise rely on source tree headers
