@@ -102,13 +102,12 @@ jobs:
           # Ensure autopoint (from gettext) is on PATH for autoreconf
           echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH || true
           echo "/usr/local/opt/gettext/bin" >> $GITHUB_PATH || true
-      - name: Build cpdb-libs (generate headers for bindgen)
+      - name: Prepare cpdb-libs headers for bindgen (configure only)
         run: |
           git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
           cd ~/cpdb-libs
           ./autogen.sh || autoreconf -fi
           ./configure --prefix=/usr/local
-          make -j"$(sysctl -n hw.ncpu)"
           cd -
           echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
       - name: Build library only
