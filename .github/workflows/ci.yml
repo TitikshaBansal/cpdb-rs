@@ -97,8 +97,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: |
-          brew update
-          brew install autoconf automake libtool gettext pkg-config glib cpdb-libs || true
+          brew update-reset || brew update
+          brew install autoconf automake libtool gettext pkg-config glib
           # Ensure autopoint (from gettext) is on PATH for autoreconf
           echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH || true
           echo "/usr/local/opt/gettext/bin" >> $GITHUB_PATH || true
@@ -107,17 +107,15 @@ jobs:
           echo "/usr/local/bin" >> $GITHUB_PATH || true
       - name: Prepare cpdb-libs headers for bindgen
         run: |
-          if brew --prefix cpdb-libs >/dev/null 2>&1; then
-            PREFIX="$(brew --prefix cpdb-libs)"
-            echo "Using Homebrew cpdb-libs at $PREFIX"
-            echo "CPDB_LIBS_PATH=$PREFIX" >> $GITHUB_ENV
-            echo "BINDGEN_EXTRA_CLANG_ARGS=-I$PREFIX/include -I$PREFIX/include/cpdb -I$PREFIX" >> $GITHUB_ENV
-          else
+          if true; then
             git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
             cd ~/cpdb-libs
             echo "PATH before autoreconf: $PATH"
-            which autoreconf || true
-            which aclocal || true
+            brew link --overwrite autoconf automake libtool gettext || true
+            which autoreconf || (brew list autoconf && ls -l /opt/homebrew/Cellar/autoconf/*/bin/)
+            which aclocal || (brew list automake && ls -l /opt/homebrew/Cellar/automake/*/bin/)
+            which libtoolize || (brew list libtool && ls -l /opt/homebrew/Cellar/libtool/*/bin/)
+            which autopoint || (brew list gettext && ls -l /opt/homebrew/Cellar/gettext/*/bin/)
             ./autogen.sh || autoreconf -fi
             ./configure --prefix=/usr/local
             # Build only headers-producing parts if any; otherwise rely on source tree headers
