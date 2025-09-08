@@ -37,7 +37,7 @@ fn main() {
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .size_t_is_usize(true)
         .derive_default(true)
-        .generate_comments(true)
+        .generate_comments(false)
         .ctypes_prefix("libc")
         .layout_tests(false)
         .raw_line("use libc;")

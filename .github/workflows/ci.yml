@@ -111,5 +111,10 @@ jobs:
           cd -
           echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
       - name: Build library only
-        run: cargo build --lib --verbose
+        env:
+          CPATH: ${{ env.HOME }}/cpdb-libs:${{ env.HOME }}/cpdb-libs/cpdb
+          C_INCLUDE_PATH: ${{ env.HOME }}/cpdb-libs:${{ env.HOME }}/cpdb-libs/cpdb
+        run: |
+          echo "Using CPATH=$CPATH"
+          cargo build --lib --verbose
       # Skip docs on macOS to avoid bindgen header requirements
