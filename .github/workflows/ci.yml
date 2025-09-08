@@ -98,7 +98,10 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install pkg-config glib || true
+          brew install autoconf automake libtool gettext pkg-config glib || true
+          # Ensure autopoint (from gettext) is on PATH for autoreconf
+          echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH || true
+          echo "/usr/local/opt/gettext/bin" >> $GITHUB_PATH || true
       - name: Build cpdb-libs (generate headers for bindgen)
         run: |
           git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
