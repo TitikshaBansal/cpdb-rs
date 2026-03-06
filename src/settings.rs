@@ -17,7 +17,9 @@ impl Settings {
         unsafe {
             let raw = ffi::cpdbGetNewSettings();
             if raw.is_null() {
-                Err(CpdbError::BackendError("Failed to create settings object".into()))
+                Err(CpdbError::BackendError(
+                    "Failed to create settings object".into(),
+                ))
             } else {
                 Ok(Self { raw })
             }
@@ -32,7 +34,9 @@ impl Settings {
         unsafe {
             let copy_raw = ffi::cpdbGetNewSettings();
             if copy_raw.is_null() {
-                Err(CpdbError::BackendError("Failed to create new settings for copy".into()))
+                Err(CpdbError::BackendError(
+                    "Failed to create new settings for copy".into(),
+                ))
             } else {
                 ffi::cpdbCopySettings(self.raw, copy_raw);
                 Ok(Self { raw: copy_raw })
@@ -47,7 +51,7 @@ impl Settings {
         }
         let c_key = CString::new(key)?;
         let c_value = CString::new(value)?;
-        
+
         unsafe {
             ffi::cpdbAddSetting(self.raw, c_key.as_ptr(), c_value.as_ptr());
         }
@@ -60,7 +64,7 @@ impl Settings {
             return Err(CpdbError::NullPointer);
         }
         let c_key = CString::new(key)?;
-        
+
         unsafe {
             ffi::cpdbClearSetting(self.raw, c_key.as_ptr());
         }
@@ -75,7 +79,9 @@ impl Settings {
         unsafe {
             let variant = ffi::cpdbSerializeToGVariant(self.raw);
             if variant.is_null() {
-                Err(CpdbError::BackendError("Failed to serialize settings".into()))
+                Err(CpdbError::BackendError(
+                    "Failed to serialize settings".into(),
+                ))
             } else {
                 Ok(variant)
             }
@@ -87,7 +93,7 @@ impl Settings {
         if self.raw.is_null() {
             return Err(CpdbError::NullPointer);
         }
-        
+
         unsafe {
             ffi::cpdbSaveSettingsToDisk(self.raw);
             // cpdbSaveSettingsToDisk returns void, so we assume success
@@ -100,7 +106,9 @@ impl Settings {
         unsafe {
             let raw = ffi::cpdbReadSettingsFromDisk();
             if raw.is_null() {
-                Err(CpdbError::BackendError("Failed to read settings from disk".into()))
+                Err(CpdbError::BackendError(
+                    "Failed to read settings from disk".into(),
+                ))
             } else {
                 Ok(Self { raw })
             }
@@ -144,7 +152,9 @@ impl Options {
         unsafe {
             let raw = ffi::cpdbGetNewOptions();
             if raw.is_null() {
-                Err(CpdbError::BackendError("Failed to create options object".into()))
+                Err(CpdbError::BackendError(
+                    "Failed to create options object".into(),
+                ))
             } else {
                 Ok(Self { raw })
             }

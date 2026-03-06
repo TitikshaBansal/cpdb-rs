@@ -10,16 +10,14 @@ pub struct PrintJob {
 }
 
 impl PrintJob {
-    pub fn new(
-        _printer_name: &str,
-        _options: &[(&str, &str)],
-        _job_name: &str,
-    ) -> Result<Self> {
+    pub fn new(_printer_name: &str, _options: &[(&str, &str)], _job_name: &str) -> Result<Self> {
         Err(CpdbError::JobFailed("Print job objects not supported in cpdb-libs API - use Printer::print_single_file instead".into()))
     }
 
     pub fn submit_with_file(&mut self, _file_path: &str) -> Result<()> {
-        Err(CpdbError::JobFailed("Print job submission not supported - use Printer::print_single_file instead".into()))
+        Err(CpdbError::JobFailed(
+            "Print job submission not supported - use Printer::print_single_file instead".into(),
+        ))
     }
 
     pub fn id(&self) -> Option<i32> {
@@ -27,7 +25,9 @@ impl PrintJob {
     }
 
     pub fn cancel(&mut self) -> Result<()> {
-        Err(CpdbError::JobFailed("Print job cancellation not supported in cpdb-libs API".into()))
+        Err(CpdbError::JobFailed(
+            "Print job cancellation not supported in cpdb-libs API".into(),
+        ))
     }
 }
 

@@ -19,7 +19,9 @@ impl Frontend {
         unsafe {
             let raw_frontend = ffi::cpdbGetNewFrontendObj(None);
             if raw_frontend.is_null() {
-                Err(CpdbError::FrontendError("cpdbGetNewFrontendObj returned null".to_string()))
+                Err(CpdbError::FrontendError(
+                    "cpdbGetNewFrontendObj returned null".to_string(),
+                ))
             } else {
                 Ok(Self { raw: raw_frontend })
             }
@@ -29,7 +31,9 @@ impl Frontend {
     /// Connects the frontend to D-Bus and activates backends.
     pub fn connect_to_dbus(&self) -> Result<()> {
         if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Frontend raw pointer is null before calling cpdbConnectToDBus".to_string()));
+            return Err(CpdbError::FrontendError(
+                "Frontend raw pointer is null before calling cpdbConnectToDBus".to_string(),
+            ));
         }
         unsafe {
             ffi::cpdbConnectToDBus(self.raw);
@@ -40,7 +44,9 @@ impl Frontend {
     /// Disconnects the frontend from D-Bus.
     pub fn disconnect_from_dbus(&self) -> Result<()> {
         if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Frontend raw pointer is null before calling cpdbDisconnectFromDBus".to_string()));
+            return Err(CpdbError::FrontendError(
+                "Frontend raw pointer is null before calling cpdbDisconnectFromDBus".to_string(),
+            ));
         }
         unsafe {
             ffi::cpdbDisconnectFromDBus(self.raw);
@@ -53,9 +59,13 @@ impl Frontend {
         unsafe {
             let new_frontend_ptr = ffi::cpdbStartListingPrinters(printer_callback);
             if new_frontend_ptr.is_null() {
-                Err(CpdbError::FrontendError("cpdbStartListingPrinters returned null, failed to start listing".to_string()))
+                Err(CpdbError::FrontendError(
+                    "cpdbStartListingPrinters returned null, failed to start listing".to_string(),
+                ))
             } else {
-                Ok(Frontend { raw: new_frontend_ptr })
+                Ok(Frontend {
+                    raw: new_frontend_ptr,
+                })
             }
         }
     }
@@ -63,7 +73,9 @@ impl Frontend {
     /// Stops the printer listing process for the given frontend object.
     pub fn stop_listing_printers(&self) -> Result<()> {
         if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Frontend raw pointer is null before calling cpdbStopListingPrinters".to_string()));
+            return Err(CpdbError::FrontendError(
+                "Frontend raw pointer is null before calling cpdbStopListingPrinters".to_string(),
+            ));
         }
         unsafe {
             ffi::cpdbStopListingPrinters(self.raw);
@@ -73,13 +85,15 @@ impl Frontend {
 
     pub fn get_printers(&self) -> Result<Vec<Printer>> {
         if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Frontend raw pointer is null for get_printers".to_string()));
+            return Err(CpdbError::FrontendError(
+                "Frontend raw pointer is null for get_printers".to_string(),
+            ));
         }
         unsafe {
             // Use cpdbGetAllPrinters which doesn't return printers directly
             // Instead, we need to implement a callback-based approach
             ffi::cpdbGetAllPrinters(self.raw);
-            
+
             // For now, return empty vector since cpdbGetAllPrinters uses callbacks
             // In a real implementation, you'd need to set up callbacks to collect printers
             Ok(Vec::new())
@@ -90,7 +104,10 @@ impl Frontend {
         // Since cpdbGetPrinter doesn't exist in the actual API,
         // we'll need to implement printer lookup differently
         // For now, return an error indicating this needs to be implemented
-        Err(CpdbError::FrontendError(format!("Printer lookup by name '{}' not yet implemented - requires callback-based approach", name)))
+        Err(CpdbError::FrontendError(format!(
+            "Printer lookup by name '{}' not yet implemented - requires callback-based approach",
+            name
+        )))
     }
 }
 

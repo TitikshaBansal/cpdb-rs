@@ -10,7 +10,10 @@ pub struct Backend {
 
 impl Backend {
     pub fn new(_backend_name: &str) -> Result<Self> {
-        Err(CpdbError::BackendError("Backend objects not supported in cpdb-libs API - use Frontend and Printer instead".into()))
+        Err(CpdbError::BackendError(
+            "Backend objects not supported in cpdb-libs API - use Frontend and Printer instead"
+                .into(),
+        ))
     }
 
     pub fn submit_job(
@@ -20,7 +23,9 @@ impl Backend {
         _options: &[(&str, &str)],
         _job_name: &str,
     ) -> Result<()> {
-        Err(CpdbError::BackendError("Backend job submission not supported - use Printer::print_single_file instead".into()))
+        Err(CpdbError::BackendError(
+            "Backend job submission not supported - use Printer::print_single_file instead".into(),
+        ))
     }
 }
 

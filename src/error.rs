@@ -1,5 +1,5 @@
-use thiserror::Error;
 use std::ffi::NulError;
+use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum CpdbError {
     #[error("Null pointer encountered")]
@@ -28,18 +28,18 @@ pub enum CpdbError {
     Unsupported,
 }
 
-pub type Result<T> = std::result::Result<T, CpdbError>; 
+pub type Result<T> = std::result::Result<T, CpdbError>;
 
 impl CpdbError {
     pub fn from_status(status: i32, context: &str) -> Self {
         match status {
-            0 => CpdbError::NullPointer, 
+            0 => CpdbError::NullPointer,
             1 => CpdbError::InvalidPrinter,
             2 => CpdbError::JobFailed(context.to_string()),
             _ => CpdbError::BackendError(format!("Unknown error ({}): {}", status, context)),
         }
     }
-    
+
     pub unsafe fn cstr_to_string(ptr: *const libc::c_char) -> Result<String> {
         if ptr.is_null() {
             return Err(CpdbError::NullPointer);

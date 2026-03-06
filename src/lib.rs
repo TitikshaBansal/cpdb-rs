@@ -5,19 +5,19 @@
 
 pub mod ffi;
 
-pub mod error;
-pub mod common;
-pub mod frontend;
 pub mod backend;
-pub mod printer;
+pub mod common;
+pub mod error;
+pub mod frontend;
 pub mod job;
+pub mod printer;
 pub mod settings;
 pub mod util;
 
 // Re-export main types
+pub use backend::Backend;
 pub use common::{init, version};
 pub use frontend::Frontend;
-pub use printer::Printer;
 pub use job::PrintJob;
-pub use backend::Backend;
-pub use settings::{Settings, Options, Media};
+pub use printer::Printer;
+pub use settings::{Media, Options, Settings};

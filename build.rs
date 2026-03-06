@@ -250,11 +250,10 @@ fn find_cpdb_libs() -> Option<String> {
     }
 
     // Try pkg-config
-    if let Ok(lib) = pkg_config::Config::new().probe("cpdb") {
-        if let Some(path) = lib.link_paths.first() {
+    if let Ok(lib) = pkg_config::Config::new().probe("cpdb")
+        && let Some(path) = lib.link_paths.first() {
             return Some(path.to_string_lossy().to_string());
         }
-    }
 
     None
 }
