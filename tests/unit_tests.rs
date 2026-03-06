@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod unit_tests {
-    use cpdb_rs::{init, version, Frontend, Settings, Options};
     use cpdb_rs::error::CpdbError;
-    use std::fs;
+    use cpdb_rs::{Frontend, Options, Settings, init, version};
     use tempfile::NamedTempFile;
 
     fn setup_test_environment() {
@@ -26,7 +25,10 @@ mod unit_tests {
             }
             Err(e) => {
                 // Version retrieval might fail in test environment
-                println!("Version retrieval failed (expected in test environment): {}", e);
+                println!(
+                    "Version retrieval failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -41,7 +43,10 @@ mod unit_tests {
             }
             Err(e) => {
                 // Frontend creation might fail in test environment
-                println!("Frontend creation failed (expected in test environment): {}", e);
+                println!(
+                    "Frontend creation failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -56,7 +61,10 @@ mod unit_tests {
             }
             Err(e) => {
                 // Settings creation might fail in test environment
-                println!("Settings creation failed (expected in test environment): {}", e);
+                println!(
+                    "Settings creation failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -68,10 +76,10 @@ mod unit_tests {
             Ok(mut settings) => {
                 // Test adding a setting
                 assert!(settings.add_setting("test_key", "test_value").is_ok());
-                
+
                 // Test clearing a setting
                 assert!(settings.clear_setting("test_key").is_ok());
-                
+
                 // Test copying settings
                 match settings.copy() {
                     Ok(copy) => {
@@ -83,7 +91,10 @@ mod unit_tests {
                 }
             }
             Err(e) => {
-                println!("Settings creation failed (expected in test environment): {}", e);
+                println!(
+                    "Settings creation failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -98,7 +109,10 @@ mod unit_tests {
             }
             Err(e) => {
                 // Options creation might fail in test environment
-                println!("Options creation failed (expected in test environment): {}", e);
+                println!(
+                    "Options creation failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -106,7 +120,7 @@ mod unit_tests {
     #[test]
     fn test_settings_file_operations() {
         setup_test_environment();
-        
+
         // Create a temporary file for testing
         let _temp_file = NamedTempFile::new().expect("Failed to create temp file");
 
@@ -126,17 +140,26 @@ mod unit_tests {
                                 println!("Settings file operations successful");
                             }
                             Err(e) => {
-                                println!("Settings load from disk failed (expected in test environment): {}", e);
+                                println!(
+                                    "Settings load from disk failed (expected in test environment): {}",
+                                    e
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        println!("Settings save to disk failed (expected in test environment): {}", e);
+                        println!(
+                            "Settings save to disk failed (expected in test environment): {}",
+                            e
+                        );
                     }
                 }
             }
             Err(e) => {
-                println!("Settings creation failed (expected in test environment): {}", e);
+                println!(
+                    "Settings creation failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -144,30 +167,45 @@ mod unit_tests {
     #[test]
     fn test_error_handling() {
         setup_test_environment();
-        
+
         // Test null pointer error
         let null_error = CpdbError::NullPointer;
         assert_eq!(format!("{}", null_error), "Null pointer encountered");
 
         // Test invalid printer error
         let invalid_printer_error = CpdbError::InvalidPrinter;
-        assert_eq!(format!("{}", invalid_printer_error), "Invalid printer object");
+        assert_eq!(
+            format!("{}", invalid_printer_error),
+            "Invalid printer object"
+        );
 
         // Test job failed error
         let job_error = CpdbError::JobFailed("Test job failed".to_string());
-        assert_eq!(format!("{}", job_error), "Print job failed: Test job failed");
+        assert_eq!(
+            format!("{}", job_error),
+            "Print job failed: Test job failed"
+        );
 
         // Test backend error
         let backend_error = CpdbError::BackendError("Test backend error".to_string());
-        assert_eq!(format!("{}", backend_error), "Backend error: Test backend error");
+        assert_eq!(
+            format!("{}", backend_error),
+            "Backend error: Test backend error"
+        );
 
         // Test frontend error
         let frontend_error = CpdbError::FrontendError("Test frontend error".to_string());
-        assert_eq!(format!("{}", frontend_error), "Frontend error: Test frontend error");
+        assert_eq!(
+            format!("{}", frontend_error),
+            "Frontend error: Test frontend error"
+        );
 
         // Test option error
         let option_error = CpdbError::OptionError("Test option error".to_string());
-        assert_eq!(format!("{}", option_error), "Option parsing error: Test option error");
+        assert_eq!(
+            format!("{}", option_error),
+            "Option parsing error: Test option error"
+        );
 
         // Test CUPS error
         let cups_error = CpdbError::CupsError(42);
@@ -212,7 +250,10 @@ mod unit_tests {
                 // but we can at least verify the structure is created
             }
             Err(e) => {
-                println!("C options conversion failed (expected in test environment): {}", e);
+                println!(
+                    "C options conversion failed (expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -220,7 +261,7 @@ mod unit_tests {
     #[test]
     fn test_printer_clone_behavior() {
         setup_test_environment();
-        
+
         // This test verifies that cloning doesn't panic
         // In a real environment, we would test with actual printer objects
         match Frontend::new() {
@@ -230,8 +271,10 @@ mod unit_tests {
                         if let Some(printer) = printers.first() {
                             // Test cloning
                             let cloned = printer.clone();
-                            assert_eq!(printer.name().unwrap_or_default(), 
-                                     cloned.name().unwrap_or_default());
+                            assert_eq!(
+                                printer.name().unwrap_or_default(),
+                                cloned.name().unwrap_or_default()
+                            );
                         }
                     }
                     Err(_) => {
@@ -250,22 +293,22 @@ mod unit_tests {
     #[test]
     fn test_resource_cleanup() {
         setup_test_environment();
-        
+
         // Test that resources are properly cleaned up
         // This is mainly to ensure Drop implementations don't panic
-        
+
         // Test Settings cleanup
         let _settings = Settings::new();
         // settings goes out of scope here, Drop should be called
-        
+
         // Test Options cleanup
         let _options = Options::new();
         // options goes out of scope here, Drop should be called
-        
+
         // Test Frontend cleanup
         let _frontend = Frontend::new();
         // frontend goes out of scope here, Drop should be called
-        
+
         println!("Resource cleanup tests completed");
     }
 }
