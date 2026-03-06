@@ -55,7 +55,7 @@ sudo make install
 
 ### Rust Dependencies
 
-- Rust 1.70+ (2021 edition)
+- Rust 1.85+ (2024 edition)
 - bindgen for FFI bindings
 - pkg-config for library discovery
 
