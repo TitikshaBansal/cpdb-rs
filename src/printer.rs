@@ -77,7 +77,7 @@ impl Printer {
         }
         unsafe {
             let c_state_ptr = ffi::cpdbGetState(self.raw);
-            util::cstr_to_string_and_g_free(c_state_ptr)
+            util::cstr_to_string(c_state_ptr)
         }
     }
 
