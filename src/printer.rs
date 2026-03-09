@@ -2,7 +2,7 @@ use crate::error::{CpdbError, Result};
 use crate::ffi;
 use crate::util;
 use libc::c_char;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::ptr;
 
 pub struct Printer {
@@ -13,7 +13,11 @@ unsafe impl Send for Printer {}
 unsafe impl Sync for Printer {}
 
 impl Printer {
-    pub unsafe fn from_raw(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
+    pub fn as_raw(&self) -> *mut crate::ffi::cpdb_printer_obj_t {
+        self.raw
+    }
+
+    pub fn from_raw(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
         if raw.is_null() {
             Err(CpdbError::NullPointer)
         } else {
@@ -115,6 +119,16 @@ impl Printer {
         Ok(model.to_lowercase().contains("pdf"))
     }
 
+    /// Set this printer as the user default.
+    pub fn set_user_default(&self) -> bool {
+        unsafe { ffi::cpdbSetUserDefaultPrinter(self.raw) != 0 }
+    }
+
+    /// Set this printer as the system default.
+    pub fn set_system_default(&self) -> bool {
+        unsafe { ffi::cpdbSetSystemDefaultPrinter(self.raw) != 0 }
+    }
+
     pub fn submit_job(
         &self,
         file_path: &str,
@@ -142,6 +156,23 @@ impl Printer {
                 // Free the job ID string
                 libc::free(job_id_ptr as *mut libc::c_void);
                 Ok(())
+            }
+        }
+    }
+
+    /// Print a file. Returns the job ID on success.
+    pub fn print_file(&self, path: &str) -> Result<String> {
+        let c_path = CString::new(path)?;
+        unsafe {
+            let job_id = ffi::cpdbPrintFile(self.raw, c_path.as_ptr());
+            if job_id.is_null() {
+                Err(CpdbError::PrintError(
+                    "cpdbPrintFile returned null".to_string(),
+                ))
+            } else {
+                let id = cstr_to_owned(job_id)?;
+                glib_sys::g_free(job_id as glib_sys::gpointer);
+                Ok(id)
             }
         }
     }
@@ -311,6 +342,106 @@ impl Printer {
         }
     }
 
+    /// Get translation for an option name.
+    pub fn get_option_translation(&self, option: &str, locale: &str) -> Result<Option<String>> {
+        let c_opt = CString::new(option)?;
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            let t = ffi::cpdbGetOptionTranslation(self.raw, c_opt.as_ptr(), c_locale.as_ptr());
+            if t.is_null() {
+                Ok(None)
+            } else {
+                let s = cstr_to_owned(t)?;
+                glib_sys::g_free(t as glib_sys::gpointer);
+                Ok(Some(s))
+            }
+        }
+    }
+
+    /// Get translation for a choice value.
+    pub fn get_choice_translation(
+        &self,
+        option: &str,
+        choice: &str,
+        locale: &str,
+    ) -> Result<Option<String>> {
+        let c_opt = CString::new(option)?;
+        let c_choice = CString::new(choice)?;
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            let t = ffi::cpdbGetChoiceTranslation(
+                self.raw,
+                c_opt.as_ptr(),
+                c_choice.as_ptr(),
+                c_locale.as_ptr(),
+            );
+            if t.is_null() {
+                Ok(None)
+            } else {
+                let s = cstr_to_owned(t)?;
+                glib_sys::g_free(t as glib_sys::gpointer);
+                Ok(Some(s))
+            }
+        }
+    }
+
+    /// Get translation for a group name.
+    pub fn get_group_translation(&self, group: &str, locale: &str) -> Result<Option<String>> {
+        let c_group = CString::new(group)?;
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            let t = ffi::cpdbGetGroupTranslation(self.raw, c_group.as_ptr(), c_locale.as_ptr());
+            if t.is_null() {
+                Ok(None)
+            } else {
+                let s = cstr_to_owned(t)?;
+                glib_sys::g_free(t as glib_sys::gpointer);
+                Ok(Some(s))
+            }
+        }
+    }
+
+    /// Fetch all translations for this printer's locale.
+    pub fn get_all_translations(&self, locale: &str) -> Result<()> {
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            ffi::cpdbGetAllTranslations(self.raw, c_locale.as_ptr());
+        }
+        Ok(())
+    }
+
+    /// Get the current setting value for an option.
+    pub fn get_setting(&self, option_name: &str) -> Result<Option<String>> {
+        let c_opt = CString::new(option_name)?;
+        unsafe {
+            let val = ffi::cpdbGetSetting(self.raw, c_opt.as_ptr());
+            if val.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(cstr_to_owned(val)?))
+            }
+        }
+    }
+
+    /// Add a setting to this printer.
+    pub fn add_setting(&self, name: &str, value: &str) -> Result<()> {
+        let c_name = CString::new(name)?;
+        let c_val = CString::new(value)?;
+        unsafe {
+            ffi::cpdbAddSettingToPrinter(self.raw, c_name.as_ptr(), c_val.as_ptr());
+        }
+        Ok(())
+    }
+
+    /// Clear a setting from this printer.
+    pub fn clear_setting(&self, name: &str) -> Result<()> {
+        let c_name = CString::new(name)?;
+        unsafe {
+            ffi::cpdbClearSettingFromPrinter(self.raw, c_name.as_ptr());
+        }
+        Ok(())
+    }
+
     /// Saves printer configuration to a file
     pub fn save_to_file(&self, filename: &str, frontend: &crate::frontend::Frontend) -> Result<()> {
         if self.raw.is_null() {
@@ -340,6 +471,19 @@ impl Printer {
             }
         }
     }
+
+    /// Pickle (serialize) this printer to a file.
+    pub fn pickle_to_file(
+        &self,
+        path: &str,
+        frontend_raw: *mut ffi::cpdb_frontend_obj_t,
+    ) -> Result<()> {
+        let c_path = CString::new(path)?;
+        unsafe {
+            ffi::cpdbPicklePrinterToFile(self.raw, c_path.as_ptr(), frontend_raw);
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Printer {
@@ -356,5 +500,13 @@ impl Clone for Printer {
             panic!("Cannot clone a Printer with a null raw pointer");
         }
         Self { raw: self.raw }
+    }
+}
+
+fn cstr_to_owned(ptr: *const libc::c_char) -> Result<String> {
+    if ptr.is_null() {
+        Err(CpdbError::NullPointer)
+    } else {
+        Ok(unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() })
     }
 }

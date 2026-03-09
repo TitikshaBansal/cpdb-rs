@@ -6,6 +6,10 @@ pub enum CpdbError {
     NullPointer,
     #[error("Invalid printer object")]
     InvalidPrinter,
+    #[error("Printer error: {0}")]
+    PrinterError(String),
+    #[error("Print error: {0}")]
+    PrintError(String),
     #[error("Print job failed: {0}")]
     JobFailed(String),
     #[error("Backend error: {0}")]
