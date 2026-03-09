@@ -1,6 +1,6 @@
 use crate::error::{CpdbError, Result};
-use crate::ffi;
 use crate::util;
+use crate::{Frontend, ffi};
 use libc::c_char;
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -443,7 +443,7 @@ impl Printer {
     }
 
     /// Saves printer configuration to a file
-    pub fn save_to_file(&self, filename: &str, frontend: &crate::frontend::Frontend) -> Result<()> {
+    pub fn save_to_file(&self, filename: &str, frontend: &Frontend) -> Result<()> {
         if self.raw.is_null() {
             return Err(CpdbError::BackendError(
                 "Printer object pointer is null for save_to_file".to_string(),
@@ -473,14 +473,10 @@ impl Printer {
     }
 
     /// Pickle (serialize) this printer to a file.
-    pub fn pickle_to_file(
-        &self,
-        path: &str,
-        frontend_raw: *mut ffi::cpdb_frontend_obj_t,
-    ) -> Result<()> {
+    pub fn pickle_to_file(&self, path: &str, frontend: &Frontend) -> Result<()> {
         let c_path = CString::new(path)?;
         unsafe {
-            ffi::cpdbPicklePrinterToFile(self.raw, c_path.as_ptr(), frontend_raw);
+            ffi::cpdbPicklePrinterToFile(self.raw, c_path.as_ptr(), frontend.as_raw());
         }
         Ok(())
     }

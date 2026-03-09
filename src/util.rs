@@ -15,19 +15,18 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String> {
 }
 
 pub unsafe fn cstr_to_string_and_g_free(c_ptr: *mut c_char) -> Result<String> {
-    unsafe {
-        if c_ptr.is_null() {
-            return Err(CpdbError::NullPointer);
-        }
-        let conversion_result =
-            // Explicit unsafe block
-            CStr::from_ptr(c_ptr).to_str().map(|s| s.to_string())
-            .map_err(CpdbError::from);
-
-        glib_sys::g_free(c_ptr as *mut c_void);
-
-        conversion_result
+    if c_ptr.is_null() {
+        return Err(CpdbError::NullPointer);
     }
+    let conversion_result = unsafe {
+        // Explicit unsafe block
+        CStr::from_ptr(c_ptr).to_str().map(|s| s.to_string())
+    }
+    .map_err(CpdbError::from);
+
+    unsafe { glib_sys::g_free(c_ptr as *mut c_void) };
+
+    conversion_result
 }
 
 pub fn to_c_options(options: &[(&str, &str)]) -> Result<Vec<ffi::cpdb_option_t>> {

@@ -398,9 +398,7 @@ fn run_command_loop(frontend: &Frontend) {
                 } else {
                     match frontend.find_printer(parts[1], parts[2]) {
                         Ok(p) => {
-                            if let Err(e) =
-                                p.pickle_to_file("/tmp/.printer-pickle", frontend.as_raw())
-                            {
+                            if let Err(e) = p.pickle_to_file("/tmp/.printer-pickle", &frontend) {
                                 eprintln!("{}", e);
                             }
                         }
