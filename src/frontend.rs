@@ -146,7 +146,6 @@ impl Frontend {
         if !self.raw.is_null() {
             unsafe {
                 ffi::cpdbHideRemotePrinters(self.raw);
-                (*self.raw).hide_remote = 1; // TRUE
             }
         }
     }
@@ -156,7 +155,6 @@ impl Frontend {
         if !self.raw.is_null() {
             unsafe {
                 ffi::cpdbUnhideRemotePrinters(self.raw);
-                (*self.raw).hide_remote = 0; // FALSE
             }
         }
     }
