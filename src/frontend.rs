@@ -191,7 +191,7 @@ impl Frontend {
         unsafe {
             let raw_printer = ffi::cpdbFindPrinterObj(self.raw, c_id.as_ptr(), c_backend.as_ptr());
             if raw_printer.is_null() {
-                Err(CpdbError::PrinterError(format!(
+                Err(CpdbError::PrintError(format!(
                     "Printer '{}' on backend '{}' not found",
                     printer_id, backend_name
                 )))

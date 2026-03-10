@@ -2,7 +2,7 @@ use crate::error::{CpdbError, Result};
 use crate::util;
 use crate::{Frontend, ffi};
 use libc::c_char;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::ptr;
 
 pub struct Printer {
@@ -34,14 +34,6 @@ impl Printer {
 
     pub fn as_raw(&self) -> *mut crate::ffi::cpdb_printer_obj_t {
         self.raw
-    }
-
-    pub fn from_raw(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
-        if raw.is_null() {
-            Err(CpdbError::NullPointer)
-        } else {
-            Ok(Self { raw, owned: false })
-        }
     }
 
     fn get_string_field<F>(
@@ -344,7 +336,7 @@ impl Printer {
             if t.is_null() {
                 Ok(None)
             } else {
-                let s = cstr_to_owned(t)?;
+                let s = util::cstr_to_string(t)?;
                 glib_sys::g_free(t as glib_sys::gpointer);
                 Ok(Some(s))
             }
@@ -371,7 +363,7 @@ impl Printer {
             if t.is_null() {
                 Ok(None)
             } else {
-                let s = cstr_to_owned(t)?;
+                let s = util::cstr_to_string(t)?;
                 glib_sys::g_free(t as glib_sys::gpointer);
                 Ok(Some(s))
             }
@@ -387,7 +379,7 @@ impl Printer {
             if t.is_null() {
                 Ok(None)
             } else {
-                let s = cstr_to_owned(t)?;
+                let s = util::cstr_to_string(t)?;
                 glib_sys::g_free(t as glib_sys::gpointer);
                 Ok(Some(s))
             }
@@ -411,7 +403,7 @@ impl Printer {
             if val.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(cstr_to_owned(val)?))
+                Ok(Some(util::cstr_to_string(val)?))
             }
         }
     }
@@ -488,13 +480,5 @@ impl Drop for Printer {
             }
             self.raw = std::ptr::null_mut();
         }
-    }
-}
-
-fn cstr_to_owned(ptr: *const libc::c_char) -> Result<String> {
-    if ptr.is_null() {
-        Err(CpdbError::NullPointer)
-    } else {
-        Ok(unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() })
     }
 }
