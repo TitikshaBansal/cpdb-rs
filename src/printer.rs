@@ -7,12 +7,31 @@ use std::ptr;
 
 pub struct Printer {
     raw: *mut ffi::cpdb_printer_obj_t,
+    owned: bool,
 }
 
 unsafe impl Send for Printer {}
 unsafe impl Sync for Printer {}
 
 impl Printer {
+    /// Create a non-owning Printer reference
+    pub(crate) fn from_raw_borrowed(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
+        if raw.is_null() {
+            Err(CpdbError::NullPointer)
+        } else {
+            Ok(Self { raw, owned: false })
+        }
+    }
+
+    /// Create an owning Printer
+    pub(crate) fn from_raw_owned(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
+        if raw.is_null() {
+            Err(CpdbError::NullPointer)
+        } else {
+            Ok(Self { raw, owned: true })
+        }
+    }
+
     pub fn as_raw(&self) -> *mut crate::ffi::cpdb_printer_obj_t {
         self.raw
     }
@@ -21,7 +40,7 @@ impl Printer {
         if raw.is_null() {
             Err(CpdbError::NullPointer)
         } else {
-            Ok(Self { raw })
+            Ok(Self { raw, owned: false })
         }
     }
 
@@ -158,32 +177,6 @@ impl Printer {
                 Ok(())
             }
         }
-    }
-
-    /// Print a file. Returns the job ID on success.
-    pub fn print_file(&self, path: &str) -> Result<String> {
-        let c_path = CString::new(path)?;
-        unsafe {
-            let job_id = ffi::cpdbPrintFile(self.raw, c_path.as_ptr());
-            if job_id.is_null() {
-                Err(CpdbError::PrintError(
-                    "cpdbPrintFile returned null".to_string(),
-                ))
-            } else {
-                let id = cstr_to_owned(job_id)?;
-                glib_sys::g_free(job_id as glib_sys::gpointer);
-                Ok(id)
-            }
-        }
-    }
-
-    pub fn try_clone(&self) -> Result<Self> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Cannot clone null printer object".to_string(),
-            ));
-        }
-        Ok(Self { raw: self.raw })
     }
 
     /// Gets all available options for this printer
@@ -467,13 +460,18 @@ impl Printer {
                     "Failed to load printer from file".into(),
                 ))
             } else {
-                Self::from_raw(printer_ptr)
+                Self::from_raw_owned(printer_ptr)
             }
         }
     }
 
     /// Pickle (serialize) this printer to a file.
     pub fn pickle_to_file(&self, path: &str, frontend: &Frontend) -> Result<()> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError(
+                "Printer object pointer is null for pickle_to_file".to_string(),
+            ));
+        }
         let c_path = CString::new(path)?;
         unsafe {
             ffi::cpdbPicklePrinterToFile(self.raw, c_path.as_ptr(), frontend.as_raw());
@@ -484,18 +482,12 @@ impl Printer {
 
 impl Drop for Printer {
     fn drop(&mut self) {
-        if !self.raw.is_null() {
-            self.raw = ptr::null_mut();
+        if self.owned && !self.raw.is_null() {
+            unsafe {
+                ffi::cpdbDeletePrinterObj(self.raw);
+            }
+            self.raw = std::ptr::null_mut();
         }
-    }
-}
-
-impl Clone for Printer {
-    fn clone(&self) -> Self {
-        if self.raw.is_null() {
-            panic!("Cannot clone a Printer with a null raw pointer");
-        }
-        Self { raw: self.raw }
     }
 }
 

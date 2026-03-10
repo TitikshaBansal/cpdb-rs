@@ -141,7 +141,7 @@ fn run_command_loop(frontend: &Frontend) {
                     match frontend.find_printer(parts[2], parts[3]) {
                         Ok(p) => {
                             p.add_setting("copies", "3").ok();
-                            match p.print_file(parts[1]) {
+                            match p.print_single_file(parts[1]) {
                                 Ok(id) => println!("Job submitted. ID: {}", id),
                                 Err(e) => eprintln!("Print failed: {}", e),
                             }

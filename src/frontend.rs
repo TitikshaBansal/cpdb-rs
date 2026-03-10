@@ -196,7 +196,7 @@ impl Frontend {
                     printer_id, backend_name
                 )))
             } else {
-                Printer::from_raw(raw_printer)
+                Printer::from_raw_borrowed(raw_printer)
             }
         }
     }
@@ -213,7 +213,7 @@ impl Frontend {
                     "No default printer found".to_string(),
                 ))
             } else {
-                Printer::from_raw(raw)
+                Printer::from_raw_borrowed(raw)
             }
         }
     }
@@ -233,7 +233,7 @@ impl Frontend {
                     backend_name
                 )))
             } else {
-                Printer::from_raw(raw)
+                Printer::from_raw_borrowed(raw)
             }
         }
     }
@@ -271,7 +271,7 @@ impl Frontend {
             {
                 let raw_printer = value as *mut ffi::cpdb_printer_obj_t;
                 if !raw_printer.is_null()
-                    && let Ok(p) = Printer::from_raw(raw_printer)
+                    && let Ok(p) = Printer::from_raw_borrowed(raw_printer)
                 {
                     printers.push(p);
                 }
