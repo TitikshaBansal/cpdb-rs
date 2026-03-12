@@ -280,14 +280,49 @@ impl Frontend {
         }
     }
 
+    /// Find a printer by name (linear scan of all printers).
+    /// If multiple printers share the same name across backends,
+    /// the first match is returned.
     pub fn get_printer(&self, name: &str) -> Result<Printer> {
-        // Since cpdbGetPrinter doesn't exist in the actual API,
-        // we'll need to implement printer lookup differently
-        // For now, return an error indicating this needs to be implemented
-        Err(CpdbError::FrontendError(format!(
-            "Printer lookup by name '{}' not yet implemented - requires callback-based approach",
-            name
-        )))
+        if self.raw.is_null() {
+            return Err(CpdbError::FrontendError(
+                "Frontend raw pointer is null for get_printer".to_string(),
+            ));
+        }
+        unsafe {
+            let hash_table = (*self.raw).printer as *mut glib_sys::GHashTable;
+            if hash_table.is_null() {
+                return Err(CpdbError::FrontendError(format!(
+                    "No printers available when looking for '{}'",
+                    name
+                )));
+            }
+
+            let mut iter: glib_sys::GHashTableIter = std::mem::zeroed();
+            let mut _key: glib_sys::gpointer = std::ptr::null_mut();
+            let mut value: glib_sys::gpointer = std::ptr::null_mut();
+
+            glib_sys::g_hash_table_iter_init(&mut iter, hash_table);
+            while glib_sys::g_hash_table_iter_next(&mut iter, &mut _key, &mut value)
+                != glib_sys::GFALSE
+            {
+                let raw_printer = value as *mut ffi::cpdb_printer_obj_t;
+                if !raw_printer.is_null() {
+                    let printer_name = (*raw_printer).name;
+                    if !printer_name.is_null() {
+                        let c_name = std::ffi::CStr::from_ptr(printer_name);
+                        if c_name.to_string_lossy() == name {
+                            return Printer::from_raw_borrowed(raw_printer);
+                        }
+                    }
+                }
+            }
+
+            Err(CpdbError::FrontendError(format!(
+                "Printer '{}' not found",
+                name
+            )))
+        }
     }
 }
 

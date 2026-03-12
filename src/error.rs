@@ -41,16 +41,4 @@ impl CpdbError {
             _ => CpdbError::BackendError(format!("Unknown error ({}): {}", status, context)),
         }
     }
-
-    pub unsafe fn cstr_to_string(ptr: *const libc::c_char) -> Result<String> {
-        if ptr.is_null() {
-            return Err(CpdbError::NullPointer);
-        }
-        unsafe {
-            std::ffi::CStr::from_ptr(ptr)
-                .to_str()
-                .map(|s| s.to_string())
-                .map_err(CpdbError::from)
-        }
-    }
 }

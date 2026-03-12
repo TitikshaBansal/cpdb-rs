@@ -5,6 +5,99 @@ use libc::c_char;
 use std::ffi::CString;
 use std::ptr;
 
+/// A handle to a CPDB printer object.
+///
+/// # Ownership model
+///
+/// Printers come in two flavors:
+///
+/// - **Borrowed** (created by [`Frontend::find_printer`], [`Frontend::get_printers`], etc.):
+///   The underlying C object is owned by the frontend's internal hash table.
+///   Rust will **not** free it on drop. These must not outlive the [`Frontend`].
+///
+/// - **Owned** (created by [`Printer::load_from_file`]):
+///   The underlying C object was allocated independently of any frontend.
+///   Rust **will** free it via `cpdbDeletePrinterObj` on drop.
+///
+/// `Printer` intentionally does **not** implement `Clone`. Sharing a borrowed
+/// printer across scopes should use `&Printer`. If shared ownership across
+/// threads is needed for an owned printer, wrap it in `Arc<Mutex<Printer>>`.
+///
+/// # Examples
+///
+/// ## Borrowed printer (from frontend lookup)
+///
+/// ```no_run
+/// use cpdb_rs::{Frontend, init};
+///
+/// init();
+/// let frontend = Frontend::new().unwrap();
+/// frontend.connect_to_dbus().unwrap();
+///
+/// // Borrowed - frontend owns the underlying C object.
+/// let printer = frontend.find_printer("MyPrinter", "CUPS").unwrap();
+/// println!("Printer: {}", printer.name().unwrap());
+/// printer.add_setting("copies", "2").unwrap();
+/// let job_id = printer.print_single_file("/tmp/test.pdf").unwrap();
+/// println!("Job ID: {}", job_id);
+///
+/// // `printer` is dropped here but the C object is NOT freed -
+/// // it's still in the frontend's hash table.
+/// ```
+///
+/// ### Passing a borrowed printer to a function
+///
+/// ```no_run
+/// use cpdb_rs::Printer;
+///
+/// fn print_details(printer: &Printer) {
+///     println!("Name: {}", printer.name().unwrap_or_default());
+///     println!("Location: {}", printer.location().unwrap_or_default());
+///     println!("State: {}", printer.get_updated_state().unwrap_or_default());
+/// }
+/// ```
+///
+/// ## Owned printer (from pickle file)
+///
+/// ```no_run
+/// use cpdb_rs::Printer;
+///
+/// // Owned - Rust will free this via cpdbDeletePrinterObj on drop.
+/// let printer = Printer::load_from_file("/tmp/.printer-pickle").unwrap();
+/// println!("Restored: {}", printer.name().unwrap());
+/// let job_id = printer.print_single_file("/tmp/document.pdf").unwrap();
+/// println!("Job ID: {}", job_id);
+///
+/// // `printer` is dropped here and the C object is freed.
+/// ```
+///
+/// ### Sharing an owned printer across threads
+///
+/// ```no_run
+/// use cpdb_rs::Printer;
+/// use std::sync::{Arc, Mutex};
+/// use std::thread;
+///
+/// let printer = Printer::load_from_file("/tmp/.printer-pickle").unwrap();
+/// let shared = Arc::new(Mutex::new(printer));
+///
+/// let handle = {
+///     let shared = Arc::clone(&shared);
+///     thread::spawn(move || {
+///         let p = shared.lock().unwrap();
+///         println!("Thread sees: {}", p.name().unwrap_or_default());
+///     })
+/// };
+///
+/// {
+///     let p = shared.lock().unwrap();
+///     println!("Main sees: {}", p.name().unwrap_or_default());
+/// }
+///
+/// handle.join().unwrap();
+/// // Dropped when last Arc is gone - cpdbDeletePrinterObj called once.
+/// ```
+#[derive(Debug)]
 pub struct Printer {
     raw: *mut ffi::cpdb_printer_obj_t,
     owned: bool,
@@ -50,13 +143,11 @@ impl Printer {
                 field_name_for_error
             )));
         }
-        unsafe {
-            let c_ptr = field_accessor(self.raw);
-            match util::cstr_to_string(c_ptr) {
-                Ok(s) => Ok(s),
-                Err(CpdbError::NullPointer) => Ok(String::new()),
-                Err(e) => Err(e),
-            }
+        let c_ptr = field_accessor(self.raw);
+        match unsafe { util::cstr_to_string(c_ptr) } {
+            Ok(s) => Ok(s),
+            Err(CpdbError::NullPointer) => Ok(String::new()),
+            Err(e) => Err(e),
         }
     }
 
@@ -480,5 +571,30 @@ impl Drop for Printer {
             }
             self.raw = std::ptr::null_mut();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_raw_borrowed_rejects_null() {
+        let result = Printer::from_raw_borrowed(std::ptr::null_mut());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CpdbError::NullPointer));
+    }
+
+    #[test]
+    fn from_raw_owned_rejects_null() {
+        let result = Printer::from_raw_owned(std::ptr::null_mut());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CpdbError::NullPointer));
+    }
+
+    #[test]
+    fn load_from_nonexistent_file_returns_error() {
+        let result = Printer::load_from_file("/tmp/nonexistent-cpdb-printer-pickle-test");
+        assert!(result.is_err());
     }
 }
