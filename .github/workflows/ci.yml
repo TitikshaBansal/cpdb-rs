@@ -47,6 +47,8 @@ jobs:
         run: cargo build --all-targets --verbose
 
       - name: Run tests
+        env:
+          LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
         run: cargo test --all --verbose -- --nocapture
 
       - name: Build examples
@@ -90,49 +92,37 @@ jobs:
         run: cargo audit
 
   build-macos:
-    name: Build (macos-latest)
+    name: Build (macos-latest, headers only)
     runs-on: macos-latest
+    env:
+      # Skip rustc-link-lib directives — cpdb-libs is not fully installed.
+      # Only verifies bindgen can parse the headers and the crate compiles;
+      # actual linking is tested on Ubuntu.
+      CPDB_NO_LINK: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install dependencies
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Homebrew dependencies
+        run: brew install autoconf automake libtool gettext pkg-config glib
+
+      - name: Clone and configure cpdb-libs (headers only)
         run: |
-          brew update-reset || brew update
-          brew install autoconf automake libtool gettext pkg-config glib
-          # Ensure autopoint (from gettext) is on PATH for autoreconf
-          echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH || true
-          echo "/usr/local/opt/gettext/bin" >> $GITHUB_PATH || true
-          # Ensure brew bin dirs are on PATH for autoreconf, aclocal, libtoolize
-          echo "/opt/homebrew/bin" >> $GITHUB_PATH || true
-          echo "/usr/local/bin" >> $GITHUB_PATH || true
-      - name: Prepare cpdb-libs headers for bindgen
-        run: |
-          if true; then
-            git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
-            cd ~/cpdb-libs
-            echo "PATH before autoreconf: $PATH"
-            brew link --overwrite autoconf automake libtool gettext || true
-            which autoreconf || (brew list autoconf && ls -l /opt/homebrew/Cellar/autoconf/*/bin/)
-            which aclocal || (brew list automake && ls -l /opt/homebrew/Cellar/automake/*/bin/)
-            which libtoolize || (brew list libtool && ls -l /opt/homebrew/Cellar/libtool/*/bin/)
-            which autopoint || (brew list gettext && ls -l /opt/homebrew/Cellar/gettext/*/bin/)
-            ./autogen.sh || autoreconf -fi
-            ./configure --prefix=/usr/local
-            # Build only headers-producing parts if any; otherwise rely on source tree headers
-            make -C cpdb -j"$(sysctl -n hw.ncpu)" || true
-            cd -
-            echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
-            echo "BINDGEN_EXTRA_CLANG_ARGS=-I$HOME/cpdb-libs -I$HOME/cpdb-libs/cpdb" >> $GITHUB_ENV
-          fi
-      - name: Build library only
-        run: |
-          if [ -n "$CPDB_LIBS_PATH" ] && [ -f "$CPDB_LIBS_PATH/cpdb/cpdb.h" -o -f "$CPDB_LIBS_PATH/include/cpdb/cpdb.h" ]; then
-            export CPATH="$CPDB_LIBS_PATH:$CPDB_LIBS_PATH/cpdb:$CPDB_LIBS_PATH/include"
-            export C_INCLUDE_PATH="$CPATH"
-            echo "Using CPATH=$CPATH"
-            echo "Using BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
-            cargo build --lib --verbose
-          else
-            echo "cpdb headers not found on macOS; skipping build to keep CI green."
-          fi
-      # Skip docs on macOS to avoid bindgen header requirements
+          git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
+          cd ~/cpdb-libs
+          # gettext tools (autopoint, etc.) must be on PATH for autoreconf
+          export PATH="/opt/homebrew/opt/gettext/bin:/opt/homebrew/bin:$PATH"
+          autoreconf -fi
+          # configure generates any auto-generated headers; make is not needed
+          ./configure --prefix=/usr/local || true
+          echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$HOME/cpdb-libs -I$HOME/cpdb-libs/cpdb" >> "$GITHUB_ENV"
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Rust library (bindgen + compile, no link)
+        run: cargo build --lib --verbose
+
