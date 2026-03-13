@@ -259,38 +259,6 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_printer_clone_behavior() {
-        setup_test_environment();
-
-        // This test verifies that cloning doesn't panic
-        // In a real environment, we would test with actual printer objects
-        match Frontend::new() {
-            Ok(frontend) => {
-                match frontend.get_printers() {
-                    Ok(printers) => {
-                        if let Some(printer) = printers.first() {
-                            // Test cloning
-                            let cloned = printer.clone();
-                            assert_eq!(
-                                printer.name().unwrap_or_default(),
-                                cloned.name().unwrap_or_default()
-                            );
-                        }
-                    }
-                    Err(_) => {
-                        // Expected in test environment without printers
-                        println!("No printers available for clone test");
-                    }
-                }
-            }
-            Err(_) => {
-                // Expected in test environment
-                println!("Frontend creation failed for clone test");
-            }
-        }
-    }
-
-    #[test]
     fn test_resource_cleanup() {
         setup_test_environment();
 

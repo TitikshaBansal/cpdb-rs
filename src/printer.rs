@@ -1,24 +1,132 @@
 use crate::error::{CpdbError, Result};
-use crate::ffi;
 use crate::util;
+use crate::{Frontend, ffi};
 use libc::c_char;
 use std::ffi::CString;
 use std::ptr;
 
+/// A handle to a CPDB printer object.
+///
+/// # Ownership model
+///
+/// Printers come in two flavors:
+///
+/// - **Borrowed** (created by [`Frontend::find_printer`], [`Frontend::get_printers`], etc.):
+///   The underlying C object is owned by the frontend's internal hash table.
+///   Rust will **not** free it on drop. These must not outlive the [`Frontend`].
+///
+/// - **Owned** (created by [`Printer::load_from_file`]):
+///   The underlying C object was allocated independently of any frontend.
+///   Rust **will** free it via `cpdbDeletePrinterObj` on drop.
+///
+/// `Printer` intentionally does **not** implement `Clone`. Sharing a borrowed
+/// printer across scopes should use `&Printer`. If shared ownership across
+/// threads is needed for an owned printer, wrap it in `Arc<Mutex<Printer>>`.
+///
+/// # Examples
+///
+/// ## Borrowed printer (from frontend lookup)
+///
+/// ```no_run
+/// use cpdb_rs::{Frontend, init};
+///
+/// init();
+/// let frontend = Frontend::new().unwrap();
+/// frontend.connect_to_dbus().unwrap();
+///
+/// // Borrowed - frontend owns the underlying C object.
+/// let printer = frontend.find_printer("MyPrinter", "CUPS").unwrap();
+/// println!("Printer: {}", printer.name().unwrap());
+/// printer.add_setting("copies", "2").unwrap();
+/// let job_id = printer.print_single_file("/tmp/test.pdf").unwrap();
+/// println!("Job ID: {}", job_id);
+///
+/// // `printer` is dropped here but the C object is NOT freed -
+/// // it's still in the frontend's hash table.
+/// ```
+///
+/// ### Passing a borrowed printer to a function
+///
+/// ```no_run
+/// use cpdb_rs::Printer;
+///
+/// fn print_details(printer: &Printer) {
+///     println!("Name: {}", printer.name().unwrap_or_default());
+///     println!("Location: {}", printer.location().unwrap_or_default());
+///     println!("State: {}", printer.get_updated_state().unwrap_or_default());
+/// }
+/// ```
+///
+/// ## Owned printer (from pickle file)
+///
+/// ```no_run
+/// use cpdb_rs::Printer;
+///
+/// // Owned - Rust will free this via cpdbDeletePrinterObj on drop.
+/// let printer = Printer::load_from_file("/tmp/.printer-pickle").unwrap();
+/// println!("Restored: {}", printer.name().unwrap());
+/// let job_id = printer.print_single_file("/tmp/document.pdf").unwrap();
+/// println!("Job ID: {}", job_id);
+///
+/// // `printer` is dropped here and the C object is freed.
+/// ```
+///
+/// ### Sharing an owned printer across threads
+///
+/// ```no_run
+/// use cpdb_rs::Printer;
+/// use std::sync::{Arc, Mutex};
+/// use std::thread;
+///
+/// let printer = Printer::load_from_file("/tmp/.printer-pickle").unwrap();
+/// let shared = Arc::new(Mutex::new(printer));
+///
+/// let handle = {
+///     let shared = Arc::clone(&shared);
+///     thread::spawn(move || {
+///         let p = shared.lock().unwrap();
+///         println!("Thread sees: {}", p.name().unwrap_or_default());
+///     })
+/// };
+///
+/// {
+///     let p = shared.lock().unwrap();
+///     println!("Main sees: {}", p.name().unwrap_or_default());
+/// }
+///
+/// handle.join().unwrap();
+/// // Dropped when last Arc is gone - cpdbDeletePrinterObj called once.
+/// ```
+#[derive(Debug)]
 pub struct Printer {
     raw: *mut ffi::cpdb_printer_obj_t,
+    owned: bool,
 }
 
 unsafe impl Send for Printer {}
 unsafe impl Sync for Printer {}
 
 impl Printer {
-    pub unsafe fn from_raw(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
+    /// Create a non-owning Printer reference
+    pub(crate) fn from_raw_borrowed(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
         if raw.is_null() {
             Err(CpdbError::NullPointer)
         } else {
-            Ok(Self { raw })
+            Ok(Self { raw, owned: false })
         }
+    }
+
+    /// Create an owning Printer
+    pub(crate) fn from_raw_owned(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
+        if raw.is_null() {
+            Err(CpdbError::NullPointer)
+        } else {
+            Ok(Self { raw, owned: true })
+        }
+    }
+
+    pub fn as_raw(&self) -> *mut crate::ffi::cpdb_printer_obj_t {
+        self.raw
     }
 
     fn get_string_field<F>(
@@ -35,13 +143,11 @@ impl Printer {
                 field_name_for_error
             )));
         }
-        unsafe {
-            let c_ptr = field_accessor(self.raw);
-            match util::cstr_to_string(c_ptr) {
-                Ok(s) => Ok(s),
-                Err(CpdbError::NullPointer) => Ok(String::new()),
-                Err(e) => Err(e),
-            }
+        let c_ptr = field_accessor(self.raw);
+        match unsafe { util::cstr_to_string(c_ptr) } {
+            Ok(s) => Ok(s),
+            Err(CpdbError::NullPointer) => Ok(String::new()),
+            Err(e) => Err(e),
         }
     }
 
@@ -77,7 +183,7 @@ impl Printer {
         }
         unsafe {
             let c_state_ptr = ffi::cpdbGetState(self.raw);
-            util::cstr_to_string_and_g_free(c_state_ptr)
+            util::cstr_to_string(c_state_ptr)
         }
     }
 
@@ -115,6 +221,16 @@ impl Printer {
         Ok(model.to_lowercase().contains("pdf"))
     }
 
+    /// Set this printer as the user default.
+    pub fn set_user_default(&self) -> bool {
+        unsafe { ffi::cpdbSetUserDefaultPrinter(self.raw) != 0 }
+    }
+
+    /// Set this printer as the system default.
+    pub fn set_system_default(&self) -> bool {
+        unsafe { ffi::cpdbSetSystemDefaultPrinter(self.raw) != 0 }
+    }
+
     pub fn submit_job(
         &self,
         file_path: &str,
@@ -144,15 +260,6 @@ impl Printer {
                 Ok(())
             }
         }
-    }
-
-    pub fn try_clone(&self) -> Result<Self> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Cannot clone null printer object".to_string(),
-            ));
-        }
-        Ok(Self { raw: self.raw })
     }
 
     /// Gets all available options for this printer
@@ -311,8 +418,108 @@ impl Printer {
         }
     }
 
+    /// Get translation for an option name.
+    pub fn get_option_translation(&self, option: &str, locale: &str) -> Result<Option<String>> {
+        let c_opt = CString::new(option)?;
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            let t = ffi::cpdbGetOptionTranslation(self.raw, c_opt.as_ptr(), c_locale.as_ptr());
+            if t.is_null() {
+                Ok(None)
+            } else {
+                let s = util::cstr_to_string(t)?;
+                glib_sys::g_free(t as glib_sys::gpointer);
+                Ok(Some(s))
+            }
+        }
+    }
+
+    /// Get translation for a choice value.
+    pub fn get_choice_translation(
+        &self,
+        option: &str,
+        choice: &str,
+        locale: &str,
+    ) -> Result<Option<String>> {
+        let c_opt = CString::new(option)?;
+        let c_choice = CString::new(choice)?;
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            let t = ffi::cpdbGetChoiceTranslation(
+                self.raw,
+                c_opt.as_ptr(),
+                c_choice.as_ptr(),
+                c_locale.as_ptr(),
+            );
+            if t.is_null() {
+                Ok(None)
+            } else {
+                let s = util::cstr_to_string(t)?;
+                glib_sys::g_free(t as glib_sys::gpointer);
+                Ok(Some(s))
+            }
+        }
+    }
+
+    /// Get translation for a group name.
+    pub fn get_group_translation(&self, group: &str, locale: &str) -> Result<Option<String>> {
+        let c_group = CString::new(group)?;
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            let t = ffi::cpdbGetGroupTranslation(self.raw, c_group.as_ptr(), c_locale.as_ptr());
+            if t.is_null() {
+                Ok(None)
+            } else {
+                let s = util::cstr_to_string(t)?;
+                glib_sys::g_free(t as glib_sys::gpointer);
+                Ok(Some(s))
+            }
+        }
+    }
+
+    /// Fetch all translations for this printer's locale.
+    pub fn get_all_translations(&self, locale: &str) -> Result<()> {
+        let c_locale = CString::new(locale)?;
+        unsafe {
+            ffi::cpdbGetAllTranslations(self.raw, c_locale.as_ptr());
+        }
+        Ok(())
+    }
+
+    /// Get the current setting value for an option.
+    pub fn get_setting(&self, option_name: &str) -> Result<Option<String>> {
+        let c_opt = CString::new(option_name)?;
+        unsafe {
+            let val = ffi::cpdbGetSetting(self.raw, c_opt.as_ptr());
+            if val.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(util::cstr_to_string(val)?))
+            }
+        }
+    }
+
+    /// Add a setting to this printer.
+    pub fn add_setting(&self, name: &str, value: &str) -> Result<()> {
+        let c_name = CString::new(name)?;
+        let c_val = CString::new(value)?;
+        unsafe {
+            ffi::cpdbAddSettingToPrinter(self.raw, c_name.as_ptr(), c_val.as_ptr());
+        }
+        Ok(())
+    }
+
+    /// Clear a setting from this printer.
+    pub fn clear_setting(&self, name: &str) -> Result<()> {
+        let c_name = CString::new(name)?;
+        unsafe {
+            ffi::cpdbClearSettingFromPrinter(self.raw, c_name.as_ptr());
+        }
+        Ok(())
+    }
+
     /// Saves printer configuration to a file
-    pub fn save_to_file(&self, filename: &str, frontend: &crate::frontend::Frontend) -> Result<()> {
+    pub fn save_to_file(&self, filename: &str, frontend: &Frontend) -> Result<()> {
         if self.raw.is_null() {
             return Err(CpdbError::BackendError(
                 "Printer object pointer is null for save_to_file".to_string(),
@@ -336,25 +543,58 @@ impl Printer {
                     "Failed to load printer from file".into(),
                 ))
             } else {
-                Self::from_raw(printer_ptr)
+                Self::from_raw_owned(printer_ptr)
             }
         }
+    }
+
+    /// Pickle (serialize) this printer to a file.
+    pub fn pickle_to_file(&self, path: &str, frontend: &Frontend) -> Result<()> {
+        if self.raw.is_null() {
+            return Err(CpdbError::BackendError(
+                "Printer object pointer is null for pickle_to_file".to_string(),
+            ));
+        }
+        let c_path = CString::new(path)?;
+        unsafe {
+            ffi::cpdbPicklePrinterToFile(self.raw, c_path.as_ptr(), frontend.as_raw());
+        }
+        Ok(())
     }
 }
 
 impl Drop for Printer {
     fn drop(&mut self) {
-        if !self.raw.is_null() {
-            self.raw = ptr::null_mut();
+        if self.owned && !self.raw.is_null() {
+            unsafe {
+                ffi::cpdbDeletePrinterObj(self.raw);
+            }
+            self.raw = std::ptr::null_mut();
         }
     }
 }
 
-impl Clone for Printer {
-    fn clone(&self) -> Self {
-        if self.raw.is_null() {
-            panic!("Cannot clone a Printer with a null raw pointer");
-        }
-        Self { raw: self.raw }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_raw_borrowed_rejects_null() {
+        let result = Printer::from_raw_borrowed(std::ptr::null_mut());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CpdbError::NullPointer));
+    }
+
+    #[test]
+    fn from_raw_owned_rejects_null() {
+        let result = Printer::from_raw_owned(std::ptr::null_mut());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CpdbError::NullPointer));
+    }
+
+    #[test]
+    fn load_from_nonexistent_file_returns_error() {
+        let result = Printer::load_from_file("/tmp/nonexistent-cpdb-printer-pickle-test");
+        assert!(result.is_err());
     }
 }

@@ -20,7 +20,7 @@ mod tests {
 
         if let Some(printer) = printers.first() {
             println!("Printer: {}", printer.name().unwrap_or_default());
-            let _ = printer.clone();
+            let _ = printer;
         }
     }
 

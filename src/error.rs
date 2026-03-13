@@ -6,6 +6,8 @@ pub enum CpdbError {
     NullPointer,
     #[error("Invalid printer object")]
     InvalidPrinter,
+    #[error("Print error: {0}")]
+    PrintError(String),
     #[error("Print job failed: {0}")]
     JobFailed(String),
     #[error("Backend error: {0}")]
@@ -37,18 +39,6 @@ impl CpdbError {
             1 => CpdbError::InvalidPrinter,
             2 => CpdbError::JobFailed(context.to_string()),
             _ => CpdbError::BackendError(format!("Unknown error ({}): {}", status, context)),
-        }
-    }
-
-    pub unsafe fn cstr_to_string(ptr: *const libc::c_char) -> Result<String> {
-        if ptr.is_null() {
-            return Err(CpdbError::NullPointer);
-        }
-        unsafe {
-            std::ffi::CStr::from_ptr(ptr)
-                .to_str()
-                .map(|s| s.to_string())
-                .map_err(CpdbError::from)
         }
     }
 }
