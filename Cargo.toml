@@ -2,6 +2,12 @@
 name = "cpdb-rs"
 version = "0.1.0"
 edition = "2024"
+description = "Safe Rust bindings for OpenPrinting cpdb-libs — Common Print Dialog Backends"
+license = "MIT"
+keywords = ["printing", "cups", "openprinting", "ffi", "cpdb"]
+categories = ["api-bindings", "os::unix-apis"]
+readme = "README.md"
+rust-version = "1.85"
 build = "build.rs"
 
 [dependencies]
