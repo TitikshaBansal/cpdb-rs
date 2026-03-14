@@ -7,32 +7,36 @@ use std::path::PathBuf;
 fn main() {
     println!("cargo:rerun-if-changed=include/wrapper.h");
 
+    let skip_link = matches!(
+        env::var("CPDB_NO_LINK").ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    );
+
     // Try to find cpdb-libs installation
     let cpdb_libs_path = find_cpdb_libs();
 
     // --- Linker Configuration ---
-    if let Some(ref cpdb_path) = cpdb_libs_path {
-        println!("cargo:rustc-link-search=native={}/cpdb/.libs", cpdb_path);
-        println!("cargo:rustc-link-search=native={}/.libs", cpdb_path);
-        // Also add cpdb subdir to include search for transitive headers
-        println!("cargo:include={}", cpdb_path);
-        println!("cargo:include={}/cpdb", cpdb_path);
-    }
+    if !skip_link {
+        if let Some(ref cpdb_path) = cpdb_libs_path {
+            println!("cargo:rustc-link-search=native={}/cpdb/.libs", cpdb_path);
+            println!("cargo:rustc-link-search=native={}/.libs", cpdb_path);
+            println!("cargo:include={}", cpdb_path);
+            println!("cargo:include={}/cpdb", cpdb_path);
+        }
 
-    // Add common system library paths
-    add_system_library_paths();
+        add_system_library_paths();
 
-    // Link required libraries
-    println!("cargo:rustc-link-lib=cpdb");
-    println!("cargo:rustc-link-lib=cpdb-frontend");
-    if matches!(
-        env::var("CPDB_LINK_BACKEND").ok().as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    ) {
-        println!("cargo:rustc-link-lib=cpdb-backend");
+        println!("cargo:rustc-link-lib=cpdb");
+        println!("cargo:rustc-link-lib=cpdb-frontend");
+        if matches!(
+            env::var("CPDB_LINK_BACKEND").ok().as_deref(),
+            Some("1") | Some("true") | Some("yes")
+        ) {
+            println!("cargo:rustc-link-lib=cpdb-backend");
+        }
+        println!("cargo:rustc-link-lib=glib-2.0");
+        println!("cargo:rustc-link-lib=gobject-2.0");
     }
-    println!("cargo:rustc-link-lib=glib-2.0");
-    println!("cargo:rustc-link-lib=gobject-2.0");
 
     // --- Bindgen Builder Setup ---
     let mut builder = bindgen::Builder::default()
@@ -56,7 +60,6 @@ fn main() {
         builder = builder.clang_arg(format!("-I{}/cpdb", cpdb_path));
         println!("Using cpdb-libs include path for bindgen: {}", cpdb_path);
     } else {
-        // Fallback to common paths
         let home_dir = env::var("HOME").unwrap_or_default();
         let cpdb_libs_project_root_for_includes = format!("{}/cpdb-libs", home_dir);
         builder = builder.clang_arg(format!("-I{}", cpdb_libs_project_root_for_includes));
@@ -79,6 +82,15 @@ fn main() {
         builder = builder.clang_arg("-I/usr/lib/x86_64-linux-gnu/glib-2.0/include");
     }
     builder = builder.clang_arg("-I/usr/include");
+
+    // Forward any extra clang args from the environment.
+    // The macOS CI step sets BINDGEN_EXTRA_CLANG_ARGS to point bindgen at the
+    // cpdb-libs source headers; without this the variable is silently ignored.
+    if let Ok(extra) = env::var("BINDGEN_EXTRA_CLANG_ARGS") {
+        for arg in extra.split_whitespace() {
+            builder = builder.clang_arg(arg);
+        }
+    }
 
     let functions_to_allow = [
         // Core functions
@@ -229,12 +241,10 @@ fn main() {
 }
 
 fn find_cpdb_libs() -> Option<String> {
-    // Try environment variable first
     if let Ok(path) = env::var("CPDB_LIBS_PATH") {
         return Some(path);
     }
 
-    // Try common installation paths
     let home_dir = env::var("HOME").unwrap_or_default();
     let cpdb_home_path = format!("{}/cpdb-libs", home_dir);
     let cpdb_local_path = format!("{}/.local/lib/cpdb-libs", home_dir);
@@ -252,7 +262,6 @@ fn find_cpdb_libs() -> Option<String> {
         }
     }
 
-    // Try pkg-config
     if let Ok(lib) = pkg_config::Config::new().probe("cpdb")
         && let Some(path) = lib.link_paths.first()
     {
