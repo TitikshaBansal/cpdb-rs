@@ -1,5 +1,6 @@
 use std::ffi::NulError;
 use thiserror::Error;
+#[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum CpdbError {
     #[error("Null pointer encountered")]
