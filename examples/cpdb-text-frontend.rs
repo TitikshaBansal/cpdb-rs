@@ -1,4 +1,4 @@
-use cpdb_rs::{Frontend, init, version};
+use cpdb_rs::{init, version, Frontend};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 use std::thread;
@@ -21,7 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
 
-        // get_all_printers calls `cpdbGetAllPrinters` which prints via `cpdbPrintBasicOptions`
+        // get_all_printers calls `cpdbGetAllPrinters` which prints via
+        // `cpdbPrintBasicOptions`
         control_frontend.get_all_printers();
         run_command_loop(&control_frontend);
     });
@@ -398,7 +399,7 @@ fn run_command_loop(frontend: &Frontend) {
                 } else {
                     match frontend.find_printer(parts[1], parts[2]) {
                         Ok(p) => {
-                            if let Err(e) = p.pickle_to_file("/tmp/.printer-pickle", &frontend) {
+                            if let Err(e) = p.pickle_to_file("/tmp/.printer-pickle", frontend) {
                                 eprintln!("{}", e);
                             }
                         }
@@ -414,37 +415,49 @@ fn run_command_loop(frontend: &Frontend) {
     }
 }
 
-// TODO: these functions still need raw FFI for GHashTable iteration,
-// should expose safe types in the future.
+// ─── Safe command implementations ────────────────────────────────────────────
 
+/// Lists all printer options using the safe `OptionsCollection` type.
+///
+/// This function contains zero `unsafe` blocks.
 fn cmd_get_all_options(frontend: &Frontend, printer_id: &str, backend_name: &str) {
-    match frontend.find_printer(printer_id, backend_name) {
-        Ok(p) => unsafe {
-            let opts = cpdb_rs::ffi::cpdbGetAllOptions(p.as_raw());
-            if opts.is_null() {
-                println!("No options.");
-            } else {
-                println!("Retrieved {} options.", (*opts).count);
-                let table = (*opts).table as *mut glib_sys::GHashTable;
-                if !table.is_null() {
-                    let mut iter: glib_sys::GHashTableIter = std::mem::zeroed();
-                    let mut _key: glib_sys::gpointer = std::ptr::null_mut();
-                    let mut value: glib_sys::gpointer = std::ptr::null_mut();
-                    glib_sys::g_hash_table_iter_init(&mut iter, table);
-                    while glib_sys::g_hash_table_iter_next(&mut iter, &mut _key, &mut value)
-                        != glib_sys::GFALSE
-                    {
-                        let opt = value as *const cpdb_rs::ffi::cpdb_option_t;
-                        if !opt.is_null() {
-                            print_option(opt);
-                        }
-                    }
+    let p = match frontend.find_printer(printer_id, backend_name) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            return;
+        }
+    };
+
+    // Ensure the backend has populated the options table before reading it.
+    if let Err(e) = p.acquire_details() {
+        eprintln!("acquire_details failed: {}", e);
+        return;
+    }
+
+    match p.get_options_collection() {
+        Ok(collection) if collection.is_empty() => {
+            println!("No options available.");
+        }
+        Ok(collection) => {
+            println!("Retrieved {} options.", collection.len());
+            for opt in collection.iter() {
+                println!("[+] {}", opt.name);
+                println!(" --> GROUP: {}", opt.group);
+                for val in &opt.supported_values {
+                    println!("   * {}", val);
                 }
+                println!(" --> DEFAULT: {}\n", opt.default_value);
             }
-        },
-        Err(e) => eprintln!("{}", e),
+        }
+        Err(e) => eprintln!("get_options_collection failed: {}", e),
     }
 }
+
+// ─── Unsafe command implementations ──────────────────────────────────────────
+// TODO: cmd_get_all_media and print_translations still iterate GHashTable
+// directly. These will be replaced with safe MediaCollection and
+// TranslationMap types in a future PR.
 
 fn cmd_get_all_media(frontend: &Frontend, printer_id: &str, backend_name: &str) {
     match frontend.find_printer(printer_id, backend_name) {
@@ -485,7 +498,8 @@ fn cmd_get_media_margins(
         Ok(p) => unsafe {
             let c_media = std::ffi::CString::new(media_name).unwrap();
             let mut margins: *mut cpdb_rs::ffi::cpdb_margin_t = std::ptr::null_mut();
-            let num = cpdb_rs::ffi::cpdbGetMediaMargins(p.as_raw(), c_media.as_ptr(), &mut margins);
+            let num =
+                cpdb_rs::ffi::cpdbGetMediaMargins(p.as_raw(), c_media.as_ptr(), &mut margins);
             for i in 0..num {
                 let m = &*margins.offset(i as isize);
                 println!("{} {} {} {}", m.left, m.right, m.top, m.bottom);
@@ -495,26 +509,7 @@ fn cmd_get_media_margins(
     }
 }
 
-// Display helpers
-
-fn print_option(opt: *const cpdb_rs::ffi::cpdb_option_t) {
-    unsafe {
-        let name = cstr_or((*opt).option_name, "?");
-        let group = cstr_or((*opt).group_name, "?");
-        let default_val = cstr_or((*opt).default_value, "?");
-
-        println!("[+] {}", name);
-        println!(" --> GROUP: {}", group);
-        for i in 0..(*opt).num_supported {
-            let val_ptr = *(*opt).supported_values.offset(i as isize);
-            if !val_ptr.is_null() {
-                let val = std::ffi::CStr::from_ptr(val_ptr).to_string_lossy();
-                println!("   * {}", val);
-            }
-        }
-        println!(" --> DEFAULT: {}\n", default_val);
-    }
-}
+// ─── Display helpers ─────────────────────────────────────────────────────────
 
 fn print_media(media: *const cpdb_rs::ffi::cpdb_media_t) {
     unsafe {
@@ -543,7 +538,8 @@ fn print_translations(p: *mut cpdb_rs::ffi::cpdb_printer_obj_t) {
         let mut key: glib_sys::gpointer = std::ptr::null_mut();
         let mut value: glib_sys::gpointer = std::ptr::null_mut();
         glib_sys::g_hash_table_iter_init(&mut iter, table);
-        while glib_sys::g_hash_table_iter_next(&mut iter, &mut key, &mut value) != glib_sys::GFALSE
+        while glib_sys::g_hash_table_iter_next(&mut iter, &mut key, &mut value)
+            != glib_sys::GFALSE
         {
             let k = key as *const libc::c_char;
             let v = value as *const libc::c_char;
@@ -556,7 +552,7 @@ fn print_translations(p: *mut cpdb_rs::ffi::cpdb_printer_obj_t) {
     }
 }
 
-// C-ABI callbacks
+// ─── C-ABI callbacks ─────────────────────────────────────────────────────────
 
 unsafe extern "C" fn acquire_details_callback(
     p: *mut cpdb_rs::ffi::cpdb_printer_obj_t,
@@ -603,7 +599,7 @@ unsafe extern "C" fn acquire_translations_callback(
     }
 }
 
-// Helpers
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn cstr_or(ptr: *const libc::c_char, fallback: &str) -> String {
     if ptr.is_null() {

@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CpdbError` is now `#[non_exhaustive]` — adding variants in future minor versions will not be a breaking change
 - `examples/cpdb_text_frontend.rs` — full command parity with the C `cpdb-text-frontend` reference tool; `main()` is free of `unsafe` blocks
 - `Cargo.toml`: added `description`, `keywords`, `categories`, `homepage`, `documentation`, `readme`, `rust-version` for crates.io publication
+- `OptionInfo` — owned Rust type representing a single printer option with name,
+  default value, group, and supported values
+- `OptionsCollection` — owned collection of all printer options, constructed by safely
+  iterating `cpdb_options_t.table` (GHashTable) once during construction; holds no raw
+  pointers after `from_raw()` returns
+- `Printer::get_options_collection()` — calls `cpdbAcquireDetails` then returns an
+  `OptionsCollection` with zero `unsafe` blocks at call site
+- `cmd_get_all_options` in `cpdb_text_frontend.rs` rewritten using
+  `get_options_collection()` — zero `unsafe` blocks remaining in that function
 
 ### Changed
 
