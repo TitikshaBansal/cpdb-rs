@@ -81,7 +81,7 @@ impl OptionsCollection {
         // must NOT be freed.
         unsafe {
             let mut iter = MaybeUninit::<GHashTableIter>::uninit();
-            g_hash_table_iter_init(iter.as_mut_ptr(), table);
+            g_hash_table_iter_init(iter.as_mut_ptr(), table as *mut glib_sys::GHashTable);
             let mut iter = iter.assume_init();
 
             let mut key: *mut libc::c_void = std::ptr::null_mut();
