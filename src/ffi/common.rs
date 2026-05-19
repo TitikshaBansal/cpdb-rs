@@ -1,10 +1,10 @@
 //! Library-wide entry points: version query, one-shot initialisation,
 //! and the small set of path/config helpers cpdb-libs ships.
 
+use super::bindings as ffi;
+use super::util;
 use crate::error::{CpdbError, Result};
-use crate::ffi;
-use crate::util;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 
 /// Returns the version of the linked cpdb-libs C library.
 pub fn version() -> Result<String> {

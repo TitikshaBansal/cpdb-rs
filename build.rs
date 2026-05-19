@@ -17,9 +17,12 @@
 //!   implementation. Linking is skipped because library crates never
 //!   link during `cargo doc`.
 
+#[cfg(feature = "ffi")]
 use std::env;
+#[cfg(feature = "ffi")]
 use std::path::PathBuf;
 
+#[cfg(feature = "ffi")]
 fn main() {
     println!("cargo:rerun-if-changed=include/wrapper.h");
     println!("cargo:rerun-if-env-changed=CPDB_LIBS_PATH");
@@ -612,3 +615,7 @@ const ALLOWED_TYPES: &[&str] = &[
     "CpdbDebugLevel",
     "gboolean",
 ];
+#[cfg(not(feature = "ffi"))]
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+}

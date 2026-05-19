@@ -20,12 +20,12 @@
 //! lock internally. If you need to dispatch printer operations from
 //! multiple threads, wrap a single printer in a [`std::sync::Mutex`].
 
-use crate::callbacks::{self, AcquireCompletion};
+use super::bindings as ffi;
+use super::frontend::Frontend;
+use super::util;
+use super::callbacks::{self, AcquireCompletion};
 use crate::error::{CpdbError, Result};
-use crate::ffi;
-use crate::frontend::Frontend;
 use crate::options::OptionsCollection;
-use crate::util;
 use libc::c_char;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -600,6 +600,7 @@ impl<'frontend> Printer<'frontend> {
                 None,
                 std::ptr::null_mut(),
             );
+            ffi::cpdbAcquireTranslations(self.raw, c_locale.as_ptr(), None, std::ptr::null_mut());
         }
         Ok(())
     }
