@@ -30,9 +30,25 @@ pub struct OptionInfo {
 
 /// An owned snapshot of every option in a `cpdb_options_t`.
 ///
-/// Built by iterating `cpdb_options_t.table` once and copying every field
-/// into Rust-owned `String`s. After construction the collection holds no
-/// raw pointers and can be freely stored, cloned, or sent across threads.
+/// Built from D-Bus `GetAllOptions` responses (zbus backend) or from
+/// C `cpdb_options_t` pointers (FFI backend). After construction, no raw
+/// pointers are held - the collection is freely movable and cloneable.
+///
+/// # Example
+///
+/// ```rust
+/// use cpdb_rs::options::{OptionsCollection, OptionInfo};
+///
+/// let col = OptionsCollection {
+///     options: vec![OptionInfo {
+///         name: "copies".to_string(),
+///         default_value: "1".to_string(),
+///         group: "General".to_string(),
+///         supported_values: vec!["1".to_string(), "2".to_string()],
+///     }],
+/// };
+/// assert_eq!(col.get("copies").unwrap().default_value, "1");
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct OptionsCollection {
     /// Every option discovered, in iteration order of the underlying
@@ -153,7 +169,28 @@ impl OptionsCollection {
     pub fn iter(&self) -> impl Iterator<Item = &OptionInfo> {
         self.options.iter()
     }
+
+    /// Builds an `OptionsCollection` from the D-Bus response tuples returned
+    /// by [`PrintBackendProxy::get_all_options()`].
+    ///
+    /// This is the zbus equivalent of [`from_raw()`](#method.from_raw) — same
+    /// output struct, different input source.
+    #[cfg(feature = "zbus-backend")]
+    pub fn from_dbus(raw: Vec<crate::proxy::RawOption>) -> Self {
+        let options = raw
+            .into_iter()
+            .map(|r| OptionInfo {
+                name: r.option_name,
+                group: r.group_name,
+                default_value: r.default_value,
+                supported_values: r.supported_values.into_iter().map(|(s,)| s).collect(),
+            })
+            .collect();
+        Self { options }
+    }
 }
+
+// ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
