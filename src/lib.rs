@@ -64,11 +64,6 @@ pub use client::CpdbClient;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 
-#[cfg(feature = "zbus-backend")]
-pub use crate::client::CpdbClient;
-#[cfg(feature = "zbus-backend")]
-pub use crate::events::{DiscoveryEvent, PrinterSnapshot};
-
 #[cfg(feature = "ffi")]
 pub use ffi::callbacks::PrinterUpdate;
 #[cfg(feature = "ffi")]
@@ -83,6 +78,3 @@ pub use ffi::{
     },
     settings::{Media, Options, Settings},
 };
-
-pub use error::{CpdbError, Result};
-pub use options::{OptionInfo, OptionsCollection};

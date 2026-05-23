@@ -89,12 +89,14 @@ fn main() {
 /// shapes, function signatures, callback typedefs — but contains no
 /// implementations. `cargo doc` for a library crate compiles to an rlib
 /// without invoking the linker, so the missing symbols never matter.
+#[cfg(feature = "ffi")]
 fn emit_docsrs_stub() {
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
     std::fs::write(out.join("cpdb_sys.rs"), DOCSRS_STUB)
         .expect("failed to write docs.rs stub bindings");
 }
 
+#[cfg(feature = "ffi")]
 const DOCSRS_STUB: &str = r#"
 // Stub bindings emitted for docs.rs / DOCS_RS builds.
 //
@@ -414,6 +416,7 @@ unsafe extern "C" {
 }
 "#;
 
+#[cfg(feature = "ffi")]
 fn env_truthy(name: &str) -> bool {
     matches!(env::var(name).ok().as_deref(), Some("1" | "true" | "yes"))
 }
@@ -423,6 +426,7 @@ fn env_truthy(name: &str) -> bool {
 /// The preferred path is pkg-config (the upstream library ships `cpdb.pc`).
 /// An explicit `CPDB_LIBS_PATH` override is consulted only when pkg-config
 /// cannot find cpdb.
+#[cfg(feature = "ffi")]
 fn locate_includes(skip_link: bool) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut cpdb_includes = Vec::new();
 
@@ -509,6 +513,7 @@ fn locate_includes(skip_link: bool) -> (Vec<PathBuf>, Vec<PathBuf>) {
 
 /// C functions exposed via the generated bindings. Anything outside this
 /// list is filtered out by bindgen.
+#[cfg(feature = "ffi")]
 const ALLOWED_FUNCTIONS: &[&str] = &[
     // Core
     "cpdbGetVersion",
@@ -598,6 +603,7 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "cpdbGetDbusConnection",
 ];
 
+#[cfg(feature = "ffi")]
 /// C types exposed via the generated bindings.
 const ALLOWED_TYPES: &[&str] = &[
     "cpdb_frontend_obj_s",

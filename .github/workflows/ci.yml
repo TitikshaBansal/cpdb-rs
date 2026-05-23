@@ -52,15 +52,24 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build (all targets)
-        run: cargo build --all-targets --verbose
+        run: cargo build --all-targets --all-features --verbose
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Run tests
+      - name: Run unit tests
         env:
           LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
-        run: cargo test --all --verbose -- --nocapture
+        run: cargo test --all-targets --all-features --verbose
+
+      - name: D-Bus smoke test (ignored integration tests)
+        env:
+          LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
+        # `dbus-launch` spins up an ephemeral session bus for the cargo
+        # invocation. No printers are configured in CI, so the smoke test
+        # exercises init/connect/discover/teardown only — its job is to
+        # catch crashes and leaks, not to assert printer counts.
+        run: dbus-launch --exit-with-session cargo test --test integration -- --ignored --nocapture
 
       - name: D-Bus smoke test (ignored integration tests)
         env:
@@ -72,7 +81,7 @@ jobs:
         run: dbus-launch --exit-with-session cargo test --test integration -- --ignored --nocapture
 
       - name: Build examples
-        run: cargo build --examples --verbose
+        run: cargo build --examples --all-features --verbose
 
   docs:
     name: Documentation
@@ -99,7 +108,7 @@ jobs:
       - name: Docs
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps -p cpdb-rs
+        run: cargo doc --no-deps -p cpdb-rs --all-features
 
   audit:
     name: Security audit
@@ -195,4 +204,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build Rust library (bindgen + compile, no link)
-        run: cargo build --lib --verbose
+        run: cargo build --lib --all-features --verbose
+
+

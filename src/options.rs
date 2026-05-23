@@ -13,6 +13,7 @@ use crate::ffi::util;
 use glib_sys::{GHashTableIter, g_hash_table_iter_init, g_hash_table_iter_next};
 #[cfg(feature = "ffi")]
 use std::mem::MaybeUninit;
+#[cfg(feature = "ffi")]
 use std::ptr::NonNull;
 
 /// A single printer option with its supported choices.
