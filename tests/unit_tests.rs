@@ -90,7 +90,7 @@ fn error_messages_are_stable() {
     );
 }
 #[cfg(all(test, feature = "ffi"))]
-mod unit_tests {
+mod ffi_tests {
     use cpdb_rs::error::CpdbError;
     use cpdb_rs::{Frontend, Options, Settings, init, version};
     use tempfile::NamedTempFile;
@@ -256,62 +256,6 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_error_handling() {
-        setup_test_environment();
-
-        // Test null pointer error
-        let null_error = CpdbError::NullPointer;
-        assert_eq!(format!("{}", null_error), "Null pointer encountered");
-
-        // Test invalid printer error
-        let invalid_printer_error = CpdbError::InvalidPrinter;
-        assert_eq!(
-            format!("{}", invalid_printer_error),
-            "Invalid printer object"
-        );
-
-        // Test job failed error
-        let job_error = CpdbError::JobFailed("Test job failed".to_string());
-        assert_eq!(
-            format!("{}", job_error),
-            "Print job failed: Test job failed"
-        );
-
-        // Test backend error
-        let backend_error = CpdbError::BackendError("Test backend error".to_string());
-        assert_eq!(
-            format!("{}", backend_error),
-            "Backend error: Test backend error"
-        );
-
-        // Test frontend error
-        let frontend_error = CpdbError::FrontendError("Test frontend error".to_string());
-        assert_eq!(
-            format!("{}", frontend_error),
-            "Frontend error: Test frontend error"
-        );
-
-        // Test option error
-        let option_error = CpdbError::OptionError("Test option error".to_string());
-        assert_eq!(
-            format!("{}", option_error),
-            "Option parsing error: Test option error"
-        );
-
-        // Test CUPS error
-        let cups_error = CpdbError::CupsError(42);
-        assert_eq!(format!("{}", cups_error), "CUPS error: 42");
-
-        // Test invalid status
-        let status_error = CpdbError::InvalidStatus(99);
-        assert_eq!(format!("{}", status_error), "Invalid status code: 99");
-
-        // Test unsupported operation
-        let unsupported_error = CpdbError::Unsupported;
-        assert_eq!(format!("{}", unsupported_error), "Unsupported operation");
-    }
-
-    #[test]
     fn test_string_conversion_utilities() {
         use cpdb_rs::ffi::util;
         use std::ffi::CString;
@@ -337,8 +281,6 @@ mod unit_tests {
         match util::to_c_options(options) {
             Ok(c_options) => {
                 assert_eq!(c_options.len(), 2);
-                // The actual content verification would require unsafe operations
-                // but we can at least verify the structure is created
             }
             Err(e) => {
                 println!(
@@ -355,19 +297,342 @@ mod unit_tests {
 
         // Test that resources are properly cleaned up
         // This is mainly to ensure Drop implementations don't panic
-
-        // Test Settings cleanup
         let _settings = Settings::new();
-        // settings goes out of scope here, Drop should be called
-
-        // Test Options cleanup
         let _options = Options::new();
-        // options goes out of scope here, Drop should be called
-
-        // Test Frontend cleanup
         let _frontend = Frontend::new();
-        // frontend goes out of scope here, Drop should be called
-
         println!("Resource cleanup tests completed");
+    }
+}
+
+// zbus backend unit tests
+
+#[cfg(all(test, feature = "zbus-backend"))]
+mod zbus_tests {
+    use cpdb_rs::config::PrinterConfig;
+    use cpdb_rs::error::CpdbError;
+    use cpdb_rs::events::{DiscoveryEvent, PrinterSnapshot};
+    use cpdb_rs::media::MediaCollection;
+    use cpdb_rs::options::OptionsCollection;
+    use cpdb_rs::proxy::{RawMargin, RawMedia, RawOption};
+    use std::collections::HashMap;
+
+    #[test]
+    fn raw_option_debug_display() {
+        let opt = RawOption {
+            option_name: "copies".to_string(),
+            group_name: "General".to_string(),
+            default_value: "1".to_string(),
+            num_supported: 2,
+            supported_values: vec![("1".to_string(),), ("2".to_string(),)],
+        };
+        let debug = format!("{:?}", opt);
+        assert!(debug.contains("copies"));
+    }
+
+    #[test]
+    fn raw_media_with_margins() {
+        let media = RawMedia {
+            name: "iso_a4_210x297mm".to_string(),
+            width: 21000,
+            length: 29700,
+            num_margins: 1,
+            margins: vec![RawMargin {
+                left: 500,
+                right: 500,
+                top: 300,
+                bottom: 300,
+            }],
+        };
+        assert_eq!(media.name, "iso_a4_210x297mm");
+        assert_eq!(media.margins.len(), 1);
+        assert_eq!(media.margins[0].left, 500);
+    }
+
+    #[test]
+    fn raw_option_clone() {
+        let opt = RawOption {
+            option_name: "sides".to_string(),
+            group_name: "General".to_string(),
+            default_value: "one-sided".to_string(),
+            num_supported: 1,
+            supported_values: vec![("one-sided".to_string(),)],
+        };
+        let clone = opt.clone();
+        assert_eq!(clone.option_name, "sides");
+        assert_eq!(clone.supported_values.len(), 1);
+    }
+
+    #[test]
+    fn options_from_dbus_empty() {
+        let col = OptionsCollection::from_dbus(vec![]);
+        assert!(col.is_empty());
+        assert_eq!(col.len(), 0);
+    }
+
+    #[test]
+    fn options_from_dbus_single_option() {
+        let raw = vec![RawOption {
+            option_name: "copies".to_string(),
+            group_name: "General".to_string(),
+            default_value: "1".to_string(),
+            num_supported: 3,
+            supported_values: vec![("1".to_string(),), ("2".to_string(),), ("99".to_string(),)],
+        }];
+        let col = OptionsCollection::from_dbus(raw);
+        assert_eq!(col.len(), 1);
+
+        let opt = col.get("copies").unwrap();
+        assert_eq!(opt.default_value, "1");
+        assert_eq!(opt.group, "General");
+        // Verify the Vec<(String,)> -> Vec<String> extraction
+        assert_eq!(opt.supported_values, vec!["1", "2", "99"]);
+    }
+
+    #[test]
+    fn options_from_dbus_multiple_options() {
+        let raw = vec![
+            RawOption {
+                option_name: "copies".to_string(),
+                group_name: "General".to_string(),
+                default_value: "1".to_string(),
+                num_supported: 1,
+                supported_values: vec![("1".to_string(),)],
+            },
+            RawOption {
+                option_name: "sides".to_string(),
+                group_name: "General".to_string(),
+                default_value: "one-sided".to_string(),
+                num_supported: 3,
+                supported_values: vec![
+                    ("one-sided".to_string(),),
+                    ("two-sided-long-edge".to_string(),),
+                    ("two-sided-short-edge".to_string(),),
+                ],
+            },
+            RawOption {
+                option_name: "print-color-mode".to_string(),
+                group_name: "Color".to_string(),
+                default_value: "color".to_string(),
+                num_supported: 2,
+                supported_values: vec![("color".to_string(),), ("monochrome".to_string(),)],
+            },
+        ];
+        let col = OptionsCollection::from_dbus(raw);
+        assert_eq!(col.len(), 3);
+
+        // Verify each option
+        assert!(col.get("copies").is_some());
+        assert!(col.get("sides").is_some());
+        assert!(col.get("print-color-mode").is_some());
+
+        let sides = col.get("sides").unwrap();
+        assert_eq!(sides.supported_values.len(), 3);
+        assert!(
+            sides
+                .supported_values
+                .contains(&"two-sided-long-edge".to_string())
+        );
+    }
+
+    #[test]
+    fn options_from_dbus_preserves_empty_supported_values() {
+        let raw = vec![RawOption {
+            option_name: "resolution".to_string(),
+            group_name: "Quality".to_string(),
+            default_value: "300dpi".to_string(),
+            num_supported: 0,
+            supported_values: vec![],
+        }];
+        let col = OptionsCollection::from_dbus(raw);
+        let opt = col.get("resolution").unwrap();
+        assert!(opt.supported_values.is_empty());
+    }
+
+    #[test]
+    fn media_from_dbus_empty() {
+        let col = MediaCollection::from_dbus(vec![]);
+        assert!(col.is_empty());
+    }
+
+    #[test]
+    fn media_from_dbus_with_margins() {
+        let raw = vec![RawMedia {
+            name: "iso_a4_210x297mm".to_string(),
+            width: 21000,
+            length: 29700,
+            num_margins: 2,
+            margins: vec![
+                RawMargin {
+                    left: 500,
+                    right: 500,
+                    top: 300,
+                    bottom: 300,
+                },
+                RawMargin {
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                },
+            ],
+        }];
+        let col = MediaCollection::from_dbus(raw);
+        assert_eq!(col.len(), 1);
+
+        let a4 = col.get("iso_a4_210x297mm").unwrap();
+        assert_eq!(a4.width, 21000);
+        assert_eq!(a4.length, 29700);
+        assert_eq!(a4.margins.len(), 2);
+        // First margin: standard
+        assert_eq!(a4.margins[0].left, 500);
+        // Second margin: borderless
+        assert_eq!(a4.margins[1].left, 0);
+    }
+
+    #[test]
+    fn media_from_dbus_without_margins() {
+        let raw = vec![RawMedia {
+            name: "na_letter_8.5x11in".to_string(),
+            width: 21590,
+            length: 27940,
+            num_margins: 0,
+            margins: vec![],
+        }];
+        let col = MediaCollection::from_dbus(raw);
+        let letter = col.get("na_letter_8.5x11in").unwrap();
+        assert!(letter.margins.is_empty());
+    }
+
+    #[test]
+    fn printer_snapshot_is_ready() {
+        let snap = PrinterSnapshot {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            info: String::new(),
+            location: String::new(),
+            make_model: String::new(),
+            state: "idle".to_string(),
+            accepting_jobs: true,
+            backend: "CUPS".to_string(),
+        };
+        assert!(snap.is_ready());
+    }
+
+    #[test]
+    fn discovery_event_pattern_matching() {
+        let events = vec![
+            DiscoveryEvent::PrinterAdded(PrinterSnapshot {
+                id: "printer-1".to_string(),
+                name: "My Printer".to_string(),
+                info: String::new(),
+                location: String::new(),
+                make_model: String::new(),
+                state: "idle".to_string(),
+                accepting_jobs: true,
+                backend: "CUPS".to_string(),
+            }),
+            DiscoveryEvent::PrinterStateChanged {
+                id: "printer-1".to_string(),
+                backend: "CUPS".to_string(),
+                state: "printing".to_string(),
+                accepting_jobs: true,
+            },
+            DiscoveryEvent::PrinterRemoved {
+                id: "printer-1".to_string(),
+                backend: "CUPS".to_string(),
+            },
+        ];
+
+        let mut printers: Vec<PrinterSnapshot> = Vec::new();
+
+        for event in events {
+            match event {
+                DiscoveryEvent::PrinterAdded(snap) => {
+                    printers.push(snap);
+                }
+                DiscoveryEvent::PrinterStateChanged {
+                    id,
+                    backend,
+                    state,
+                    accepting_jobs,
+                } => {
+                    if let Some(p) = printers
+                        .iter_mut()
+                        .find(|p| p.id == id && p.backend == backend)
+                    {
+                        p.state = state;
+                        p.accepting_jobs = accepting_jobs;
+                    }
+                }
+                DiscoveryEvent::PrinterRemoved { id, backend } => {
+                    printers.retain(|p| !(p.id == id && p.backend == backend));
+                }
+            }
+        }
+
+        // After all events: printer was added, state changed, then removed
+        assert!(printers.is_empty());
+    }
+
+    #[test]
+    fn config_roundtrip_preserves_all_fields() {
+        let mut settings = HashMap::new();
+        settings.insert("copies".to_string(), "5".to_string());
+        settings.insert("media".to_string(), "iso_a4_210x297mm".to_string());
+        settings.insert("sides".to_string(), "two-sided-long-edge".to_string());
+        settings.insert("print-color-mode".to_string(), "monochrome".to_string());
+
+        let config = PrinterConfig::new("HP-LaserJet", "CUPS", settings);
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        let loaded: PrinterConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded.last_printer_id.as_deref(), Some("HP-LaserJet"));
+        assert_eq!(loaded.last_backend.as_deref(), Some("CUPS"));
+        assert_eq!(loaded.get_setting("copies"), Some("5"));
+        assert_eq!(loaded.get_setting("sides"), Some("two-sided-long-edge"));
+    }
+
+    #[test]
+    fn error_display_messages() {
+        // Verify all error variants format correctly
+        assert_eq!(
+            format!("{}", CpdbError::NullPointer),
+            "Null pointer encountered"
+        );
+        assert_eq!(
+            format!("{}", CpdbError::BackendError("CUPS down".into())),
+            "Backend error: CUPS down"
+        );
+        assert_eq!(
+            format!("{}", CpdbError::Unsupported),
+            "Unsupported operation"
+        );
+    }
+
+    #[test]
+    fn error_from_status_mapping() {
+        assert!(matches!(
+            CpdbError::from_status(0, ""),
+            CpdbError::NullPointer
+        ));
+        assert!(matches!(
+            CpdbError::from_status(1, ""),
+            CpdbError::InvalidPrinter
+        ));
+        assert!(matches!(
+            CpdbError::from_status(2, "test"),
+            CpdbError::JobFailed(_)
+        ));
+        assert!(matches!(
+            CpdbError::from_status(99, "unknown"),
+            CpdbError::BackendError(_)
+        ));
+    }
+
+    #[test]
+    fn error_is_non_exhaustive() {
+        // This test just ensures the enum compiles with #[non_exhaustive]
+        let err: CpdbError = CpdbError::BackendError("test".into());
+        let _msg = format!("{}", err);
     }
 }

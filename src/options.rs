@@ -169,25 +169,6 @@ impl OptionsCollection {
     pub fn iter(&self) -> impl Iterator<Item = &OptionInfo> {
         self.options.iter()
     }
-
-    /// Builds an `OptionsCollection` from the D-Bus response tuples returned
-    /// by [`PrintBackendProxy::get_all_options()`].
-    ///
-    /// This is the zbus equivalent of [`from_raw()`](#method.from_raw) — same
-    /// output struct, different input source.
-    #[cfg(feature = "zbus-backend")]
-    pub fn from_dbus(raw: Vec<crate::proxy::RawOption>) -> Self {
-        let options = raw
-            .into_iter()
-            .map(|r| OptionInfo {
-                name: r.option_name,
-                group: r.group_name,
-                default_value: r.default_value,
-                supported_values: r.supported_values.into_iter().map(|(s,)| s).collect(),
-            })
-            .collect();
-        Self { options }
-    }
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────

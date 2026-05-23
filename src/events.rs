@@ -1,12 +1,16 @@
-/// Events emitted during printer discovery.
-/// The dialog pattern-matches on these in its update() function.
+//! Discovery events emitted by CPDB backends.
+//!
+//! These map directly to the D-Bus signals defined in the
+//! `org.openprinting.PrintBackend` interface.
+
+/// An event emitted during printer discovery or state monitoring.
 #[derive(Debug, Clone)]
 pub enum DiscoveryEvent {
-    /// A new printer appeared on a backend
+    /// A printer was discovered or re-announced.
     PrinterAdded(PrinterSnapshot),
-    /// A printer was removed
+    /// A printer was removed from the backend.
     PrinterRemoved { id: String, backend: String },
-    /// A printer's state changed
+    /// A printer's state or accepting-jobs status changed.
     PrinterStateChanged {
         id: String,
         backend: String,
@@ -15,8 +19,7 @@ pub enum DiscoveryEvent {
     },
 }
 
-/// Owned, cloneable snapshot of a printer's identity.
-/// Built from PrinterAdded signal args.
+/// Snapshot of a printer's identity and status at a point in time.
 #[derive(Debug, Clone)]
 pub struct PrinterSnapshot {
     pub id: String,

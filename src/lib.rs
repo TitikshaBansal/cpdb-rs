@@ -51,6 +51,16 @@ pub mod media;
 #[cfg(feature = "zbus-backend")]
 pub mod proxy;
 
+// Re-export core types for convenience.
+pub use config::PrinterConfig;
+pub use error::{CpdbError, Result};
+pub use events::{DiscoveryEvent, PrinterSnapshot};
+pub use media::{MarginInfo, MediaCollection, MediaInfo};
+pub use options::{OptionInfo, OptionsCollection};
+
+#[cfg(feature = "zbus-backend")]
+pub use client::CpdbClient;
+
 #[cfg(feature = "ffi")]
 pub mod ffi;
 

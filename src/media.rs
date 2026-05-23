@@ -1,3 +1,5 @@
+//! Paper sizes and margins returned by `GetAllOptions`.
+
 #[cfg(feature = "zbus-backend")]
 use crate::proxy::RawMedia;
 
