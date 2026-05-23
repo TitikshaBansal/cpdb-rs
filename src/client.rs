@@ -331,16 +331,16 @@ impl CpdbClient {
         locale: &str,
     ) -> Result<HashMap<String, String>> {
         let proxy = self.proxy_for(backend)?;
-        Ok(proxy
+        proxy
             .get_all_translations(printer_id, locale)
             .await
-            .map_err(CpdbError::from)?)
+            .map_err(CpdbError::from)
     }
 
     /// Returns the default printer ID for a specific backend.
     pub async fn get_default_printer(&self, backend: &str) -> Result<String> {
         let proxy = self.proxy_for(backend)?;
-        Ok(proxy.get_default_printer().await.map_err(CpdbError::from)?)
+        proxy.get_default_printer().await.map_err(CpdbError::from)
     }
 
     /// Submits a print job and returns a writable file descriptor.
