@@ -25,7 +25,7 @@ pub struct MediaCollection {
 }
 
 impl MediaCollection {
-    /// Build from D-Bus response (the Vec<RawMedia> from GetAllOptions)
+    /// Build from D-Bus response (the `Vec<RawMedia>` from GetAllOptions)
     #[cfg(feature = "zbus-backend")]
     pub fn from_dbus(raw: Vec<RawMedia>) -> Self {
         let media = raw
