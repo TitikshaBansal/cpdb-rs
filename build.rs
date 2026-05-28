@@ -271,6 +271,17 @@ unsafe extern "C" {
         file_path: *const libc::c_char,
         title: *const libc::c_char,
     ) -> *mut libc::c_char;
+    pub fn cpdbPrintFD(
+        printer: *mut cpdb_printer_obj_t,
+        jobid_out: *mut *mut libc::c_char,
+        title: *const libc::c_char,
+        socket_path_out: *mut *mut libc::c_char,
+    ) -> libc::c_int;
+    pub fn cpdbPrintSocket(
+        printer: *mut cpdb_printer_obj_t,
+        jobid_out: *mut *mut libc::c_char,
+        title: *const libc::c_char,
+    ) -> *mut libc::c_char;
     pub fn cpdbGetAllOptions(printer: *mut cpdb_printer_obj_t) -> *mut cpdb_options_t;
     pub fn cpdbGetOption(
         printer: *mut cpdb_printer_obj_t,
@@ -328,6 +339,17 @@ unsafe extern "C" {
         group: *const libc::c_char,
         locale: *const libc::c_char,
     ) -> *mut libc::c_char;
+    pub fn cpdbGetOptionTranslationFromTable(
+        printer: *mut cpdb_printer_obj_t,
+        option: *const libc::c_char,
+        locale: *const libc::c_char,
+    ) -> *mut libc::c_char;
+    pub fn cpdbGetChoiceTranslationFromTable(
+        printer: *mut cpdb_printer_obj_t,
+        option: *const libc::c_char,
+        choice: *const libc::c_char,
+        locale: *const libc::c_char,
+    ) -> *mut libc::c_char;
     pub fn cpdbGetMedia(
         printer: *mut cpdb_printer_obj_t,
         name: *const libc::c_char,
@@ -349,6 +371,8 @@ unsafe extern "C" {
         frontend: *const cpdb_frontend_obj_t,
     );
     pub fn cpdbResurrectPrinterFromFile(path: *const libc::c_char) -> *mut cpdb_printer_obj_t;
+    pub fn cpdbDebugPrinter(printer: *const cpdb_printer_obj_t);
+    pub fn cpdbPrintBasicOptions(printer: *const cpdb_printer_obj_t);
 
     pub fn cpdbGetNewSettings() -> *mut cpdb_settings_t;
     pub fn cpdbDeleteSettings(settings: *mut cpdb_settings_t);
@@ -369,6 +393,17 @@ unsafe extern "C" {
     pub fn cpdbDeleteOptions(options: *mut cpdb_options_t);
     pub fn cpdbDeleteOption(option: *mut cpdb_option_t);
     pub fn cpdbDeleteMedia(media: *mut cpdb_media_t);
+
+    // D-Bus connection probe.
+    pub fn cpdbGetDbusConnection() -> *mut libc::c_void;
+
+    // Path / config helpers.
+    pub fn cpdbGetUserConfDir() -> *mut libc::c_char;
+    pub fn cpdbGetSysConfDir() -> *mut libc::c_char;
+    pub fn cpdbGetAbsolutePath(path: *const libc::c_char) -> *mut libc::c_char;
+    pub fn cpdbConcatSep(a: *const libc::c_char, b: *const libc::c_char) -> *mut libc::c_char;
+    pub fn cpdbConcatPath(a: *const libc::c_char, b: *const libc::c_char) -> *mut libc::c_char;
+    pub fn cpdbGetGroup(option_name: *const libc::c_char) -> *mut libc::c_char;
 }
 "#;
 
@@ -518,6 +553,8 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "cpdbGetOptionTranslation",
     "cpdbGetChoiceTranslation",
     "cpdbGetGroupTranslation",
+    "cpdbGetOptionTranslationFromTable",
+    "cpdbGetChoiceTranslationFromTable",
     "cpdbGetMedia",
     "cpdbGetMediaSize",
     "cpdbGetMediaMargins",

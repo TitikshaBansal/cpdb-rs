@@ -115,6 +115,17 @@ impl Frontend {
         Ok(())
     }
 
+    /// Returns `true` when cpdb-libs currently holds a live D-Bus connection.
+    ///
+    /// This consults `cpdbGetDbusConnection`, which is a process-global —
+    /// not per-frontend — query, so the result reflects the overall
+    /// cpdb-libs state rather than this specific [`Frontend`].
+    pub fn dbus_connected() -> bool {
+        // SAFETY: no arguments; returns either a live `GDBusConnection *`
+        // or null.
+        !unsafe { ffi::cpdbGetDbusConnection() }.is_null()
+    }
+
     /// Disconnects from D-Bus.
     pub fn disconnect_from_dbus(&self) -> Result<()> {
         // SAFETY: pointer is non-null.

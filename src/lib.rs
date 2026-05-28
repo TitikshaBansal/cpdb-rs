@@ -21,9 +21,14 @@ pub mod settings;
 pub mod util;
 
 pub use callbacks::PrinterUpdate;
-pub use common::{init, version};
+pub use common::{
+    absolute_path, concat_path, concat_sep, init, option_group, system_config_dir,
+    user_config_dir, version,
+};
 pub use error::{CpdbError, Result};
 pub use frontend::Frontend;
 pub use options::{OptionInfo, OptionsCollection};
-pub use printer::{Margin, Margins, MediaSize, Printer, TranslationMap};
+pub use printer::{
+    Margin, Margins, MediaSize, PrintFdHandle, PrintSocketHandle, Printer, TranslationMap,
+};
 pub use settings::{Media, Options, Settings};

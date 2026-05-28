@@ -55,13 +55,13 @@ safe Rust wrapper yet.
 | C-2.3 | HIGH | [x] | `Frontend::new_with_observer<F: FnMut(&Printer, PrinterUpdate) + Send + 'static>` added. Implemented via a process-global Mutex&lt;HashMap&gt; registry keyed on the frontend pointer (because `cpdb_printer_callback` carries no `user_data`); unregister-on-drop is wired in `Frontend::Drop`. Panics in the closure are absorbed by `catch_unwind`. | `src/callbacks.rs`, `src/frontend.rs` |
 | C-2.4 | HIGH | [x] | `Printer::acquire_details_with` and `Printer::acquire_translations_with` accept `FnOnce(&Printer, bool) + Send + 'static`. Standard `Box<Box<dyn FnOnce>>` thin-pointer trampoline; `catch_unwind` wraps the user closure. | `src/callbacks.rs`, `src/printer.rs` |
 | C-2.5 | MED | [x] | Wrappers added: `Frontend::add_printer`, `Frontend::remove_printer`, `Frontend::refresh_printer_list`. | `src/frontend.rs` |
-| C-2.6 | MED | [ ] | Wrap `cpdbPrintFD` and `cpdbPrintSocket` for the FD/socket print paths. | |
-| C-2.7 | MED | [ ] | Wrap translation `*FromTable` variants. | |
+| C-2.6 | MED | [x] | `Printer::print_fd` and `Printer::print_socket` return safe handles. `PrintFdHandle` holds an `OwnedFd` (auto-closing) + `job_id` + optional `socket_path`; `PrintSocketHandle` holds `socket_path` + `job_id`. Defensive `g_free` on output params if the call returns failure. | `src/printer.rs` |
+| C-2.7 | MED | [x] | `Printer::get_option_translation_from_table` and `Printer::get_choice_translation_from_table` — synchronous local-table lookups; no D-Bus roundtrip. | `src/printer.rs` |
 | C-2.8 | MED | [x] | `Margin` / `Margins` / `MediaSize` structs added; `get_media_margins` returns the full array, not just `[0]`. | `src/printer.rs` |
-| C-2.9 | MED | [ ] | Debug bridges: `cpdbFDebugPrintf`, `cpdbBDebugPrintf`, `CpdbDebugLevel`, `cpdbDebugPrinter`, `cpdbPrintBasicOptions`, `cpdbFillBasicOptions`. | |
-| C-2.10 | MED | [ ] | GVariant helpers: `cpdbPackStringArray`, `cpdbUnpackStringArray`, `cpdbPackMediaArray`. Allowlisted in bindgen, no Rust wrappers yet. | |
-| C-2.11 | MED | [ ] | Path/config helpers: `cpdbGetUserConfDir`, `cpdbGetSysConfDir`, `cpdbGetAbsolutePath`, `cpdbConcatSep`, `cpdbConcatPath`, `cpdbGetGroup`. | |
-| C-2.12 | MED | [ ] | Backend creation: `cpdbCreateBackend`, `cpdbGetDbusConnection`. | |
+| C-2.9 | MED | [x] | `Printer::debug_dump` (wraps `cpdbDebugPrinter`) and `Printer::dump_basic_options` (wraps `cpdbPrintBasicOptions`). Variadic `cpdbFDebugPrintf` / `cpdbBDebugPrintf` deliberately skipped — Rust callers should use `log`/`tracing`. `cpdbFillBasicOptions` requires GVariant exposure, see C-2.10. | `src/printer.rs` |
+| C-2.10 | MED | [-] | **Decided not to do.** `cpdbPackStringArray` / `cpdbUnpackStringArray` / `cpdbPackMediaArray` and `cpdbFillBasicOptions` all trade in raw `*mut GVariant`. We deliberately removed raw GVariant from the public API in B-1.9 — exposing these helpers would require re-introducing a `Variant` wrapper and ref-counting machinery, for no demonstrated user need. Callers needing GVariant should use the `glib` crate's `Variant` type directly. | |
+| C-2.11 | MED | [x] | `user_config_dir`, `system_config_dir`, `absolute_path`, `concat_sep`, `concat_path`, `option_group` free functions in `common.rs`, all re-exported from the crate root. | `src/common.rs`, `src/lib.rs` |
+| C-2.12 | MED | [~] | `Frontend::dbus_connected()` — minimal probe wrapping `cpdbGetDbusConnection`. Full `cpdbCreateBackend` deliberately skipped: returning a `PrintBackend` GObject would require ref-counting and a `glib`/`gio` dependency for one constructor; we defer to 0.2 when there's a demonstrated user need. | `src/frontend.rs` |
 
 Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 `cpdb_print_job_t`, `cpdb_async_obj_t`, `cpdbGetActiveJobsCount`,

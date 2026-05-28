@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 
 /// Page margins in hundredths of a millimetre.
@@ -60,6 +61,29 @@ pub struct MediaSize {
     pub width: i32,
     /// Length.
     pub length: i32,
+}
+
+/// Handle returned by [`Printer::print_fd`].
+///
+/// The caller writes the document data to [`PrintFdHandle::fd`] and then
+/// drops the handle to close it.
+#[derive(Debug)]
+pub struct PrintFdHandle {
+    /// A writable file descriptor that consumes the print job data.
+    pub fd: OwnedFd,
+    /// The backend-assigned job ID, or an empty string when not provided.
+    pub job_id: String,
+    /// Optional auxiliary socket path the backend may return.
+    pub socket_path: Option<String>,
+}
+
+/// Handle returned by [`Printer::print_socket`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrintSocketHandle {
+    /// Path to a Unix-domain socket the caller writes the job data to.
+    pub socket_path: String,
+    /// The backend-assigned job ID, or an empty string when not provided.
+    pub job_id: String,
 }
 
 /// An owned snapshot of a printer's translation table.
@@ -247,6 +271,90 @@ impl<'frontend> Printer<'frontend> {
             util::cstr_to_string_and_g_free(id)
                 .map_err(|_| CpdbError::JobFailed("cpdbPrintFile returned null".into()))
         }
+    }
+
+    /// Streams a print job over a file descriptor.
+    ///
+    /// cpdb-libs hands back a writable file descriptor; the caller writes
+    /// the job's data to it and drops the returned handle to close it.
+    /// The backend job ID and an optional auxiliary socket path are also
+    /// returned.
+    pub fn print_fd(&self, title: &str) -> Result<PrintFdHandle> {
+        let c_title = CString::new(title)?;
+        let mut jobid_ptr: *mut c_char = std::ptr::null_mut();
+        let mut socket_ptr: *mut c_char = std::ptr::null_mut();
+        // SAFETY: pointers are non-null; output params receive
+        // `g_strdup`'d strings we own.
+        let fd = unsafe {
+            ffi::cpdbPrintFD(
+                self.raw.as_ptr(),
+                &mut jobid_ptr,
+                c_title.as_ptr(),
+                &mut socket_ptr,
+            )
+        };
+        if fd < 0 {
+            // Defensive cleanup in case cpdb-libs allocated before failing.
+            unsafe {
+                if !jobid_ptr.is_null() {
+                    glib_sys::g_free(jobid_ptr as glib_sys::gpointer);
+                }
+                if !socket_ptr.is_null() {
+                    glib_sys::g_free(socket_ptr as glib_sys::gpointer);
+                }
+            }
+            return Err(CpdbError::JobFailed(
+                "cpdbPrintFD returned an invalid fd".into(),
+            ));
+        }
+        let job_id = if jobid_ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { util::cstr_to_string_and_g_free(jobid_ptr) }.unwrap_or_default()
+        };
+        let socket_path = if socket_ptr.is_null() {
+            None
+        } else {
+            unsafe { util::cstr_to_string_and_g_free(socket_ptr) }.ok()
+        };
+        // SAFETY: cpdb-libs returned a valid fd we now own.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        Ok(PrintFdHandle {
+            fd,
+            job_id,
+            socket_path,
+        })
+    }
+
+    /// Streams a print job over a Unix-domain socket.
+    ///
+    /// cpdb-libs returns a socket path the caller connects to and writes
+    /// the job data through, plus the backend-assigned job ID.
+    pub fn print_socket(&self, title: &str) -> Result<PrintSocketHandle> {
+        let c_title = CString::new(title)?;
+        let mut jobid_ptr: *mut c_char = std::ptr::null_mut();
+        // SAFETY: cpdb returns a `g_strdup`'d socket path we own.
+        let socket_ptr = unsafe {
+            ffi::cpdbPrintSocket(self.raw.as_ptr(), &mut jobid_ptr, c_title.as_ptr())
+        };
+        if socket_ptr.is_null() {
+            if !jobid_ptr.is_null() {
+                unsafe { glib_sys::g_free(jobid_ptr as glib_sys::gpointer) };
+            }
+            return Err(CpdbError::JobFailed(
+                "cpdbPrintSocket returned a null socket path".into(),
+            ));
+        }
+        let socket_path = unsafe { util::cstr_to_string_and_g_free(socket_ptr) }?;
+        let job_id = if jobid_ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { util::cstr_to_string_and_g_free(jobid_ptr) }.unwrap_or_default()
+        };
+        Ok(PrintSocketHandle {
+            socket_path,
+            job_id,
+        })
     }
 
     /// Submits a job with a per-call set of options and an explicit title.
@@ -559,6 +667,57 @@ impl<'frontend> Printer<'frontend> {
         }
     }
 
+    /// Like [`get_option_translation`], but only consults the in-memory
+    /// translation table — never falls through to the backend over D-Bus.
+    ///
+    /// Returns `None` if the option label has not been loaded yet. Call
+    /// [`Printer::get_all_translations`] (or
+    /// [`Printer::acquire_translations_with`]) first to populate the table.
+    ///
+    /// [`get_option_translation`]: Self::get_option_translation
+    pub fn get_option_translation_from_table(
+        &self,
+        option: &str,
+        locale: &str,
+    ) -> Result<Option<String>> {
+        let c_opt = CString::new(option)?;
+        let c_locale = CString::new(locale)?;
+        // SAFETY: cpdb returns a `g_strdup`'d translation string we own.
+        unsafe {
+            let t = ffi::cpdbGetOptionTranslationFromTable(
+                self.raw.as_ptr(),
+                c_opt.as_ptr(),
+                c_locale.as_ptr(),
+            );
+            translation_to_option(t)
+        }
+    }
+
+    /// Like [`get_choice_translation`], but only consults the in-memory
+    /// translation table — never falls through to the backend over D-Bus.
+    ///
+    /// [`get_choice_translation`]: Self::get_choice_translation
+    pub fn get_choice_translation_from_table(
+        &self,
+        option: &str,
+        choice: &str,
+        locale: &str,
+    ) -> Result<Option<String>> {
+        let c_opt = CString::new(option)?;
+        let c_choice = CString::new(choice)?;
+        let c_locale = CString::new(locale)?;
+        // SAFETY: cpdb returns a `g_strdup`'d translation string we own.
+        unsafe {
+            let t = ffi::cpdbGetChoiceTranslationFromTable(
+                self.raw.as_ptr(),
+                c_opt.as_ptr(),
+                c_choice.as_ptr(),
+                c_locale.as_ptr(),
+            );
+            translation_to_option(t)
+        }
+    }
+
     /// Returns the human-readable label for an option group.
     pub fn get_group_translation(&self, group: &str, locale: &str) -> Result<Option<String>> {
         let c_group = CString::new(group)?;
@@ -630,6 +789,23 @@ impl<'frontend> Printer<'frontend> {
             }
         }
         TranslationMap { locale, entries }
+    }
+
+    // ─── Debug helpers ───────────────────────────────────────────────────────
+
+    /// Dumps a human-readable description of this printer to stderr via
+    /// `cpdbDebugPrinter`. Useful for diagnostics; production code should
+    /// inspect the typed accessors instead.
+    pub fn debug_dump(&self) {
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbDebugPrinter(self.raw.as_ptr()) };
+    }
+
+    /// Dumps the printer's basic option set to stdout via
+    /// `cpdbPrintBasicOptions`. Diagnostics-only.
+    pub fn dump_basic_options(&self) {
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbPrintBasicOptions(self.raw.as_ptr()) };
     }
 
     // ─── Persistence ─────────────────────────────────────────────────────────

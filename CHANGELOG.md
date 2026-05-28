@@ -66,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Printer::translations()` and the [`TranslationMap`] type — owned
   snapshot of a printer's translation hash table. No raw FFI required
   to enumerate translations from user code.
+- `Printer::print_fd` and `Printer::print_socket` — safe wrappers around
+  `cpdbPrintFD` / `cpdbPrintSocket`. Return `PrintFdHandle`
+  (`OwnedFd` + `job_id` + optional `socket_path`) and `PrintSocketHandle`
+  respectively.
+- `Printer::get_option_translation_from_table` and
+  `Printer::get_choice_translation_from_table` — synchronous local-table
+  translation lookups (no D-Bus roundtrip).
+- `Printer::debug_dump` and `Printer::dump_basic_options` — wrappers for
+  `cpdbDebugPrinter` / `cpdbPrintBasicOptions`.
+- `Frontend::dbus_connected()` — process-wide D-Bus availability probe.
+- Free functions in `cpdb_rs::common` (also re-exported from the crate
+  root): `user_config_dir`, `system_config_dir`, `absolute_path`,
+  `concat_sep`, `concat_path`, `option_group`.
 - `Frontend::add_printer`, `Frontend::remove_printer`,
   `Frontend::refresh_printer_list` — wrappers around the corresponding C
   functions.
