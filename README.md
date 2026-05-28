@@ -233,6 +233,67 @@ cargo run --example cli_printer_manager
 cargo run --example cpdb-text-frontend
 ```
 
+## Architecture
+
+```
+            ┌───────────────────────────────────────────┐
+            │            cpdb_rs::Frontend              │
+            │  (D-Bus connection, backend list, hash    │
+            │   table of discovered printers)           │
+            └─────┬─────────────────────────────────┬───┘
+                  │ borrowed                        │ owned
+                  │ (lifetime tied to &Frontend)    │ (Drop frees)
+                  ▼                                 ▼
+       ┌────────────────────┐            ┌──────────────────────┐
+       │ Printer<'frontend> │            │ Printer<'static>     │
+       │ from get_printer / │            │ from load_from_file  │
+       │ find_printer / ... │            └──────────────────────┘
+       └────────┬───────────┘
+                │
+                ├── per-printer settings  (add_setting / clear_setting)
+                ├── option lookups        (get_default / get_current / get_option)
+                ├── translations         ─ TranslationMap (owned snapshot)
+                ├── media                ─ MediaSize, Margins
+                └── job submission       (print_file / submit_job / print_fd / print_socket)
+
+
+                       ┌──────────────────────────┐
+                       │     cpdb_rs::Settings     │
+                       │  (free-standing serial-   │
+                       │   isable settings object) │
+                       └──────────────────────────┘
+                            ▲
+                            │ persisted via save_to_disk / read_from_disk
+                            ▼
+                   ~/.config/cpdb/ (cpdb-libs-managed location)
+```
+
+### Two `add_setting` methods, two scopes
+
+| Method                    | Scope                                              | Persists across runs?               |
+|---------------------------|----------------------------------------------------|-------------------------------------|
+| `Printer::add_setting`    | This printer only, in-memory on the printer object | Only if you re-add on each run      |
+| `Settings::add_setting`   | Free-standing settings collection                  | Yes, via `Settings::save_to_disk()` |
+
+`Printer::add_setting` is the per-job knob: tweak `copies`, `sides`, etc.
+before calling `print_file` / `submit_job`. `Settings` is the global,
+serialisable view that cpdb-libs reads back from disk on startup.
+
+### Module map
+
+| Module                | What lives here                                                     |
+|-----------------------|----------------------------------------------------------------------|
+| `cpdb_rs::frontend`   | `Frontend` — D-Bus lifecycle, printer discovery, default printer    |
+| `cpdb_rs::printer`    | `Printer`, `Margin/Margins`, `MediaSize`, `TranslationMap`,         |
+|                       | `PrintFdHandle`, `PrintSocketHandle`                                |
+| `cpdb_rs::settings`   | `Settings`, `Options`, `Media`                                      |
+| `cpdb_rs::options`    | `OptionInfo`, `OptionsCollection` (owned snapshot of cpdb_options_t)|
+| `cpdb_rs::callbacks`  | Closure trampolines + `PrinterUpdate` enum                          |
+| `cpdb_rs::common`     | `init`, `version`, path/config helpers                              |
+| `cpdb_rs::error`      | `CpdbError` and the crate-wide `Result` alias                       |
+| `cpdb_rs::util`       | Internal `CStr` helpers + the `COptions` C-array builder            |
+| `cpdb_rs::ffi`        | Raw bindgen output; everything `unsafe`                             |
+
 ## Ownership model
 
 `Printer` carries a lifetime tied to the `Frontend` it came from. Borrowed

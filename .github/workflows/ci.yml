@@ -28,7 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config autoconf automake libtool libtool-bin gettext autopoint \
-            libglib2.0-dev libdbus-1-dev \
+            libglib2.0-dev libdbus-1-dev dbus dbus-x11 \
             libcups2-dev cups \
             libavahi-common-dev libavahi-client-dev \
             git curl
@@ -61,6 +61,15 @@ jobs:
         env:
           LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
         run: cargo test --all --verbose -- --nocapture
+
+      - name: D-Bus smoke test (ignored integration tests)
+        env:
+          LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
+        # `dbus-launch` spins up an ephemeral session bus for the cargo
+        # invocation. No printers are configured in CI, so the smoke test
+        # exercises init/connect/discover/teardown only — its job is to
+        # catch crashes and leaks, not to assert printer counts.
+        run: dbus-launch --exit-with-session cargo test --test integration -- --ignored --nocapture
 
       - name: Build examples
         run: cargo build --examples --verbose
@@ -102,6 +111,56 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Run audit
         run: cargo audit
+
+  deny:
+    name: cargo-deny (licenses, advisories, bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Run cargo deny
+        run: cargo deny --all-features check
+
+  miri:
+    name: Miri (pure-Rust portions)
+    runs-on: ubuntu-latest
+    # Miri cannot evaluate cpdb-libs FFI calls. The job exercises the
+    # subset of tests marked safe (everything not gated by
+    # `#[cfg_attr(miri, ignore)]`) and is non-blocking — its purpose is
+    # to catch undefined behaviour in pure-Rust code (lifetime errors,
+    # use-after-free, pointer arithmetic) before it ships.
+    continue-on-error: true
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly + miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+
+      - name: Install system dependencies (headers only)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev build-essential pkg-config autoconf automake libtool libtool-bin gettext autopoint
+
+      - name: Build and install cpdb-libs (for headers — bindgen still runs)
+        run: |
+          git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
+          cd ~/cpdb-libs
+          ./autogen.sh || autoreconf -fi
+          ./configure --prefix=/usr
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Run miri on the library tests
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo miri test --lib -- --skip 'ffi::'
 
   build-macos:
     name: Build (macos-latest, headers only)

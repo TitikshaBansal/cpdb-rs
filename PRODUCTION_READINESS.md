@@ -81,7 +81,7 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 | D-3.4 | HIGH | [x] | Global `dead_code` / `non_snake_case` allows scoped to `src/ffi.rs` only. `src/lib.rs` now uses `#![deny(missing_docs)]`. | `src/lib.rs`, `src/ffi.rs` |
 | D-3.5 | MED | [x] | Added `links = "cpdb"` to `[package]`. | `Cargo.toml` |
 | D-3.6 | MED | [x] | `CONTRIBUTING.md` updated to Rust 1.85 / 2024 edition to match `Cargo.toml`. | `CONTRIBUTING.md` |
-| D-3.7 | MED | [ ] | Consider splitting bindgen output into a `cpdb-sys` crate. Cleaner layering; defer to 0.2. | |
+| D-3.7 | MED | [-] | **Deferred to 0.2.** Splitting bindgen output into a `cpdb-sys` crate is cleaner but a structural change that breaks consumers' import paths. Will revisit when there's a second consumer of the raw bindings. | |
 
 ---
 
@@ -93,9 +93,9 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 | E-4.2 | HIGH | [x] | `cargo fmt --all -- --check` job added. | `.github/workflows/ci.yml` |
 | E-4.3 | HIGH | [x] | `release.yml` workflow triggered on `v*.*.*` tags: installs cpdb-libs, runs fmt + clippy + tests, asserts the tag matches `Cargo.toml`, performs `cargo publish --dry-run`, then creates a GitHub Release with the changelog section auto-extracted. Pre-release marker triggered when the tag contains `-`. | `.github/workflows/release.yml` |
 | E-4.4 | HIGH | [x] | `build.rs` detects the `DOCS_RS` env var and writes a hand-rolled stub `cpdb_sys.rs` (all types, all function signatures, no implementations). Library crates do not invoke the linker during `cargo doc`, so the missing symbols never surface — docs.rs now builds end-to-end. | `build.rs` |
-| E-4.5 | MED | [ ] | Add `dependabot.yml` and `CODEOWNERS`. | |
-| E-4.6 | MED | [ ] | Add `cargo deny check` (licenses, advisories, bans). | |
-| E-4.7 | LOW | [ ] | Minimal D-Bus + dummy-CUPS integration smoke test that runs at least one `#[ignore]`-flagged test in CI. | |
+| E-4.5 | MED | [x] | `.github/dependabot.yml` (cargo + github-actions, weekly, grouped patch/minor) and `.github/CODEOWNERS` shipped. | `.github/` |
+| E-4.6 | MED | [x] | `deny.toml` with license allowlist, advisory checks, wildcard ban, registry pin. CI runs `cargo deny --all-features check`. | `deny.toml`, `.github/workflows/ci.yml` |
+| E-4.7 | LOW | [x] | CI now runs `dbus-launch --exit-with-session cargo test --test integration -- --ignored`. Verifies init → connect → discover → teardown survive end-to-end against a real session bus. | `.github/workflows/ci.yml` |
 
 ---
 
@@ -120,8 +120,8 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 |---|---|---|---|---|
 | G-6.1 | HIGH | [x] | `tests/unit_tests.rs` rewritten: real assertions on Settings lifecycle, `try_clone` independence, `clear_setting` return value, util string helpers, error formatting. No more dishonest `println!("expected in test environment")` arms. | `tests/unit_tests.rs` |
 | G-6.2 | HIGH | [x] | `tests/integration.rs` rewritten: removed dead `PrintJob` references; new `submit_job` test verifies options application and asserts a non-empty job id. | `tests/integration.rs` |
-| G-6.3 | MED | [ ] | Add a `cargo miri test` job covering the safe portions. | |
-| G-6.4 | MED | [ ] | Add a property/round-trip test for `util::to_c_options`. | |
+| G-6.3 | MED | [x] | Nightly miri job added to CI (`continue-on-error: true`). FFI-touching tests marked `#[cfg_attr(miri, ignore)]`; pure-Rust tests in `util::tests` and the `from_raw_*` null-rejection tests are miri-exercised. | `.github/workflows/ci.yml`, `tests/unit_tests.rs`, `src/printer.rs` |
+| G-6.4 | MED | [x] | Round-trip tests added inline in `src/util.rs::tests`: empty input, single pair, multi-pair order preservation, interior-NUL rejection on key and value, null-init of unused fields, pointer stability across move. All miri-compatible. | `src/util.rs` |
 
 ---
 
@@ -135,7 +135,7 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 | H-7.4 | MED | [x] | Every `unsafe impl Send/Sync` now carries a `SAFETY:` comment justifying it. | `src/settings.rs`, `src/frontend.rs` |
 | H-7.5 | MED | [x] | CONTRIBUTING.md updated to "Rust 1.85+ (2024 edition)" and the placeholder username fixed. | `CONTRIBUTING.md` |
 | H-7.6 | LOW | [x] | README now includes a dedicated `find_printer(id, backend)` example. | `README.md` |
-| H-7.7 | LOW | [ ] | Add a short architecture / module map to the README. | `README.md` |
+| H-7.7 | LOW | [x] | README now has an Architecture section: ASCII diagram of `Frontend → Printer<'frontend> / Printer<'static>` flow, the `Printer::add_setting` vs `Settings::add_setting` scope table, and a per-module map. | `README.md` |
 
 ---
 

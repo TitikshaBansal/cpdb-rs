@@ -115,6 +115,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cargo publish --dry-run`, and creates a GitHub Release with notes
   auto-extracted from `CHANGELOG.md`.
 - `src/lib.rs` upgraded `#![warn(missing_docs)]` to `#![deny(missing_docs)]`.
+- `.github/dependabot.yml` (weekly cargo + github-actions updates) and
+  `.github/CODEOWNERS` added.
+- `deny.toml` + CI job running `cargo deny --all-features check`
+  (license allowlist, advisory database, wildcard ban, registry pin).
+- CI smoke test: `dbus-launch --exit-with-session cargo test --test
+  integration -- --ignored` exercises init → connect → discover →
+  teardown against a real session bus.
+- Nightly miri job (non-blocking) exercises pure-Rust portions of the
+  crate. FFI-touching tests marked `#[cfg_attr(miri, ignore)]`.
+- Round-trip tests for `util::to_c_options` covering empty input, single
+  and multi-pair builds, interior-NUL rejection on key/value,
+  null-init of unused option fields, and pointer stability across move.
+- README: Architecture section with ASCII diagram, per-module map,
+  and a `Printer::add_setting` vs `Settings::add_setting` scope table.
 
 ## [0.1.0] - 2024-01-XX
 

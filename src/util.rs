@@ -104,3 +104,100 @@ pub fn to_c_options(pairs: &[(&str, &str)]) -> Result<COptions> {
         options: options.into_boxed_slice(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    //! Pure-Rust unit tests. These do not touch cpdb-libs and are safe
+    //! to run under `cargo miri test`.
+
+    use super::*;
+
+    /// Reads back the strings embedded in a `COptions` via the same raw
+    /// pointer machinery cpdb-libs uses on the C side. Validates that
+    /// `to_c_options` produces a layout consistent with the C ABI.
+    fn read_back(opts: &COptions) -> Vec<(String, String)> {
+        let mut out = Vec::with_capacity(opts.len());
+        for i in 0..opts.len() {
+            // SAFETY: pointer arithmetic inside the boxed slice; pointers
+            // captured at construction remain valid for the slice's
+            // lifetime.
+            let entry = unsafe { &*opts.options.as_ptr().add(i) };
+            let name = unsafe { CStr::from_ptr(entry.option_name) }
+                .to_string_lossy()
+                .into_owned();
+            let value = unsafe { CStr::from_ptr(entry.default_value) }
+                .to_string_lossy()
+                .into_owned();
+            out.push((name, value));
+        }
+        out
+    }
+
+    #[test]
+    fn empty_input_yields_empty_options() {
+        let opts = to_c_options(&[]).unwrap();
+        assert!(opts.is_empty());
+        assert_eq!(opts.len(), 0);
+        assert!(read_back(&opts).is_empty());
+    }
+
+    #[test]
+    fn single_pair_round_trips() {
+        let opts = to_c_options(&[("copies", "2")]).unwrap();
+        assert_eq!(opts.len(), 1);
+        let echoed = read_back(&opts);
+        assert_eq!(echoed, vec![("copies".to_string(), "2".to_string())]);
+    }
+
+    #[test]
+    fn multiple_pairs_round_trip_in_order() {
+        let input = &[
+            ("copies", "3"),
+            ("sides", "two-sided-long-edge"),
+            ("orientation-requested", "portrait"),
+            ("media", "iso_a4_210x297mm"),
+        ];
+        let opts = to_c_options(input).unwrap();
+        assert_eq!(opts.len(), input.len());
+
+        let echoed = read_back(&opts);
+        let expected: Vec<(String, String)> = input
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(echoed, expected);
+    }
+
+    #[test]
+    fn interior_nul_in_key_is_rejected() {
+        let result = to_c_options(&[("co\0pies", "1")]);
+        assert!(matches!(result, Err(CpdbError::NulError(_))));
+    }
+
+    #[test]
+    fn interior_nul_in_value_is_rejected() {
+        let result = to_c_options(&[("copies", "1\0")]);
+        assert!(matches!(result, Err(CpdbError::NulError(_))));
+    }
+
+    #[test]
+    fn group_and_supported_fields_are_null_initialised() {
+        let opts = to_c_options(&[("a", "b")]).unwrap();
+        // SAFETY: opts.len() == 1, so index 0 is a valid entry.
+        let entry = unsafe { &*opts.options.as_ptr() };
+        assert!(entry.group_name.is_null());
+        assert!(entry.supported_values.is_null());
+        assert_eq!(entry.num_supported, 0);
+    }
+
+    #[test]
+    fn pointers_stay_valid_across_move() {
+        // Constructing then moving the COptions must not invalidate the
+        // raw pointers embedded in its `options` slice. Boxed slices have
+        // stable addresses; this test pins that invariant.
+        let opts = to_c_options(&[("k", "v")]).unwrap();
+        let moved = opts;
+        let echoed = read_back(&moved);
+        assert_eq!(echoed, vec![("k".to_string(), "v".to_string())]);
+    }
+}

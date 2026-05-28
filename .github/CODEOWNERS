@@ -1,0 +1,20 @@
+# Default owners for everything in this repository.
+#
+# Anyone in this list is automatically requested for review when a pull
+# request modifies files matching the pattern. Update the team/handles
+# below to match your organization's reviewers.
+
+*                       @OpenPrinting/cpdb-rs-maintainers
+
+# Build-script and dependency changes deserve extra scrutiny — they
+# affect every consumer's compile and link.
+/build.rs               @OpenPrinting/cpdb-rs-maintainers
+/Cargo.toml             @OpenPrinting/cpdb-rs-maintainers
+/Cargo.lock             @OpenPrinting/cpdb-rs-maintainers
+
+# Anything touching unsafe FFI surfaces.
+/src/ffi.rs             @OpenPrinting/cpdb-rs-maintainers
+/src/callbacks.rs       @OpenPrinting/cpdb-rs-maintainers
+
+# CI and release-automation changes.
+/.github/               @OpenPrinting/cpdb-rs-maintainers

@@ -1,16 +1,22 @@
 //! Tests that do not require a live D-Bus or running cpdb backends.
+//!
+//! Tests marked `#[cfg_attr(miri, ignore)]` invoke cpdb-libs C functions
+//! that miri cannot interpret; they remain part of the regular test
+//! suite but are skipped under `cargo miri test`.
 
 use cpdb_rs::error::CpdbError;
 use cpdb_rs::{Settings, init, util, version};
 use std::ffi::CString;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn init_is_idempotent() {
     init();
     init();
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn version_is_non_empty_when_present() {
     init();
     if let Ok(v) = version() {
@@ -19,6 +25,7 @@ fn version_is_non_empty_when_present() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn settings_lifecycle() {
     init();
     let mut s = Settings::new().expect("Settings::new failed");
@@ -30,6 +37,7 @@ fn settings_lifecycle() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn settings_try_clone_is_independent() {
     init();
     let mut a = Settings::new().expect("Settings::new failed");

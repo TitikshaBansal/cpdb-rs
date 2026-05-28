@@ -874,7 +874,10 @@ mod tests {
         assert!(matches!(r, Err(CpdbError::NullPointer)));
     }
 
+    // `load_from_file` calls `cpdbResurrectPrinterFromFile` — real FFI.
+    // Miri cannot interpret it, so skip there.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn load_from_nonexistent_file_returns_error() {
         let r = Printer::load_from_file("/tmp/cpdb-rs-nonexistent-pickle-file");
         assert!(r.is_err());
