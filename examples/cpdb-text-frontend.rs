@@ -280,13 +280,18 @@ fn run_command_loop(frontend: &Frontend) {
                     match frontend.find_printer(parts[1], parts[2]) {
                         Ok(p) => {
                             println!("Acquiring printer details asynchronously...");
-                            unsafe {
-                                cpdb_rs::ffi::cpdbAcquireDetails(
-                                    p.as_raw(),
-                                    Some(acquire_details_callback),
-                                    std::ptr::null_mut(),
-                                );
-                            }
+                            p.acquire_details_with(|p, ok| {
+                                let name = p.name().unwrap_or_default();
+                                let backend = p.backend_name().unwrap_or_default();
+                                if ok {
+                                    println!("Details acquired for {} : {}", name, backend);
+                                } else {
+                                    println!(
+                                        "Could not acquire printer details for {} : {}",
+                                        name, backend
+                                    );
+                                }
+                            });
                         }
                         Err(e) => eprintln!("{}", e),
                     }
@@ -299,15 +304,25 @@ fn run_command_loop(frontend: &Frontend) {
                     match frontend.find_printer(parts[1], parts[2]) {
                         Ok(p) => {
                             let locale = get_locale();
-                            let c_locale = std::ffi::CString::new(locale.as_str()).unwrap();
                             println!("Acquiring printer translations asynchronously...");
-                            unsafe {
-                                cpdb_rs::ffi::cpdbAcquireTranslations(
-                                    p.as_raw(),
-                                    c_locale.as_ptr(),
-                                    Some(acquire_translations_callback),
-                                    std::ptr::null_mut(),
-                                );
+                            if let Err(e) = p.acquire_translations_with(&locale, |p, ok| {
+                                let name = p.name().unwrap_or_default();
+                                let backend = p.backend_name().unwrap_or_default();
+                                if ok {
+                                    println!(
+                                        "Translations acquired for {} : {}",
+                                        name, backend
+                                    );
+                                    // SAFETY: borrowed printer is valid here.
+                                    print_translations(p.as_raw());
+                                } else {
+                                    println!(
+                                        "Could not acquire printer translations for {} : {}",
+                                        name, backend
+                                    );
+                                }
+                            }) {
+                                eprintln!("{}", e);
                             }
                         }
                         Err(e) => eprintln!("{}", e),
@@ -537,53 +552,6 @@ fn print_translations(p: *mut cpdb_rs::ffi::cpdb_printer_obj_t) {
                 let vs = std::ffi::CStr::from_ptr(v).to_string_lossy();
                 println!("'{}' : '{}'", ks, vs);
             }
-        }
-    }
-}
-
-// ─── C-ABI callbacks ─────────────────────────────────────────────────────────
-
-unsafe extern "C" fn acquire_details_callback(
-    p: *mut cpdb_rs::ffi::cpdb_printer_obj_t,
-    success: libc::c_int,
-    _user_data: *mut libc::c_void,
-) {
-    unsafe {
-        if p.is_null() {
-            return;
-        }
-        let name = cstr_or((*p).name, "?");
-        let backend = cstr_or((*p).backend_name, "?");
-        if success != 0 {
-            println!("Details acquired for {} : {}", name, backend);
-        } else {
-            println!(
-                "Could not acquire printer details for {} : {}",
-                name, backend
-            );
-        }
-    }
-}
-
-unsafe extern "C" fn acquire_translations_callback(
-    p: *mut cpdb_rs::ffi::cpdb_printer_obj_t,
-    success: libc::c_int,
-    _user_data: *mut libc::c_void,
-) {
-    unsafe {
-        if p.is_null() {
-            return;
-        }
-        let name = cstr_or((*p).name, "?");
-        let backend = cstr_or((*p).backend_name, "?");
-        if success != 0 {
-            println!("Translations acquired for {} : {}", name, backend);
-            print_translations(p);
-        } else {
-            println!(
-                "Could not acquire printer translations for {} : {}",
-                name, backend
-            );
         }
     }
 }

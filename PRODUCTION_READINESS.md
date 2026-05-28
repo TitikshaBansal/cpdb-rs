@@ -52,8 +52,8 @@ safe Rust wrapper yet.
 |---|---|---|---|---|
 | C-2.1 | HIGH | [x] | Phantom symbols removed from `build.rs` allowlist. | `build.rs` |
 | C-2.2 | HIGH | [x] | `src/job.rs` and `src/backend.rs` deleted; re-exports removed from `src/lib.rs`. | |
-| C-2.3 | HIGH | [ ] | Closure-friendly wrapper for `cpdb_printer_callback`. Current `Frontend::new_with_callback` still takes a raw `unsafe extern "C" fn`. | |
-| C-2.4 | HIGH | [ ] | Closure-friendly wrapper for `cpdb_async_callback` used by `cpdbAcquireDetails` / `cpdbAcquireTranslations`. | |
+| C-2.3 | HIGH | [x] | `Frontend::new_with_observer<F: FnMut(&Printer, PrinterUpdate) + Send + 'static>` added. Implemented via a process-global Mutex&lt;HashMap&gt; registry keyed on the frontend pointer (because `cpdb_printer_callback` carries no `user_data`); unregister-on-drop is wired in `Frontend::Drop`. Panics in the closure are absorbed by `catch_unwind`. | `src/callbacks.rs`, `src/frontend.rs` |
+| C-2.4 | HIGH | [x] | `Printer::acquire_details_with` and `Printer::acquire_translations_with` accept `FnOnce(&Printer, bool) + Send + 'static`. Standard `Box<Box<dyn FnOnce>>` thin-pointer trampoline; `catch_unwind` wraps the user closure. | `src/callbacks.rs`, `src/printer.rs` |
 | C-2.5 | MED | [x] | Wrappers added: `Frontend::add_printer`, `Frontend::remove_printer`, `Frontend::refresh_printer_list`. | `src/frontend.rs` |
 | C-2.6 | MED | [ ] | Wrap `cpdbPrintFD` and `cpdbPrintSocket` for the FD/socket print paths. | |
 | C-2.7 | MED | [ ] | Wrap translation `*FromTable` variants. | |
@@ -130,7 +130,7 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 | ID | Sev | Status | Item | Location |
 |---|---|---|---|---|
 | H-7.1 | HIGH | [x] | README rewritten end-to-end against the shipping API. | `README.md` |
-| H-7.2 | HIGH | [~] | `#![warn(missing_docs)]` added to `src/lib.rs`. Every `pub` item now has at least a one-line doc comment. Consider escalating to `deny` once the upstream callback wrappers (C-2.3 / C-2.4) land. | `src/lib.rs` |
+| H-7.2 | HIGH | [~] | `#![warn(missing_docs)]` added to `src/lib.rs`. Closure-wrapped callback APIs (C-2.3 / C-2.4) are documented. Consider escalating `warn` to `deny` once the FFI module's bindgen output stops triggering it. | `src/lib.rs` |
 | H-7.3 | HIGH | [~] | The cpdb-text-frontend example now uses safe `Printer::get_media_margins` / `MediaSize`. A `print_translations` helper still iterates the raw `translations` GHashTable; promote that to a safe `TranslationMap` in 0.1.x. | `examples/cpdb-text-frontend.rs` |
 | H-7.4 | MED | [x] | Every `unsafe impl Send/Sync` now carries a `SAFETY:` comment justifying it. | `src/settings.rs`, `src/frontend.rs` |
 | H-7.5 | MED | [x] | CONTRIBUTING.md updated to "Rust 1.85+ (2024 edition)" and the placeholder username fixed. | `CONTRIBUTING.md` |

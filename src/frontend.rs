@@ -11,6 +11,7 @@
 //! cpdb-libs does not lock internally. If you need concurrent access,
 //! wrap the frontend in a [`std::sync::Mutex`].
 
+use crate::callbacks::{self, PrinterUpdate};
 use crate::error::{CpdbError, Result};
 use crate::ffi;
 use crate::printer::Printer;
@@ -36,13 +37,38 @@ impl Frontend {
         Self::new_internal(None)
     }
 
-    /// Creates a new frontend with a custom printer-update callback.
+    /// Creates a new frontend with a raw printer-update callback.
+    ///
+    /// Prefer [`Frontend::new_with_observer`] for closure-based callbacks.
+    /// This entry point exists for callers that need to interoperate with a
+    /// hand-written `extern "C"` callback.
     ///
     /// The callback is invoked from the cpdb-libs internal D-Bus listener
     /// thread when printers are added, removed, or change state. It must be
     /// thread-safe and must not call back into this `Frontend`.
     pub fn new_with_callback(cb: ffi::cpdb_printer_callback) -> Result<Self> {
         Self::new_internal(cb)
+    }
+
+    /// Creates a new frontend with a closure-based printer observer.
+    ///
+    /// The observer is invoked from cpdb-libs' internal D-Bus listener
+    /// thread when printers are added, removed, or change state. Because
+    /// `cpdb_printer_callback` carries no `user_data`, the closure is
+    /// stored in a process-global registry keyed by the frontend pointer
+    /// and removed automatically when the [`Frontend`] is dropped.
+    ///
+    /// The closure must be `Send + 'static`. Panics inside the closure are
+    /// caught by `catch_unwind` and absorbed; do not rely on panic-based
+    /// flow control inside callbacks.
+    pub fn new_with_observer<F>(observer: F) -> Result<Self>
+    where
+        F: FnMut(&Printer<'_>, PrinterUpdate) + Send + 'static,
+    {
+        let cb: ffi::cpdb_printer_callback = Some(callbacks::printer_trampoline);
+        let frontend = Self::new_internal(cb)?;
+        callbacks::register_printer_observer(frontend.raw.as_ptr(), Box::new(observer));
+        Ok(frontend)
     }
 
     fn new_internal(cb: ffi::cpdb_printer_callback) -> Result<Self> {
@@ -339,6 +365,10 @@ impl Frontend {
 
 impl Drop for Frontend {
     fn drop(&mut self) {
+        // Unregister any observer FIRST so an in-flight callback from
+        // cpdb-libs' D-Bus thread finds an empty slot and bails out
+        // instead of touching a half-freed object.
+        callbacks::unregister_printer_observer(self.raw.as_ptr());
         // SAFETY: we own the pointer.
         unsafe { ffi::cpdbDeleteFrontendObj(self.raw.as_ptr()) };
     }

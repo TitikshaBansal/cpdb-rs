@@ -105,6 +105,29 @@ fn list_printers() -> cpdb_rs::Result<()> {
 }
 ```
 
+### Observing printer events
+
+```rust
+use cpdb_rs::{Frontend, PrinterUpdate, init};
+use std::time::Duration;
+
+fn watch() -> cpdb_rs::Result<()> {
+    init();
+    let frontend = Frontend::new_with_observer(|printer, update| {
+        let name = printer.name().unwrap_or_default();
+        match update {
+            PrinterUpdate::Added       => println!("+ {name}"),
+            PrinterUpdate::Removed     => println!("- {name}"),
+            PrinterUpdate::StateChanged => println!("~ {name}"),
+        }
+    })?;
+    frontend.connect_to_dbus()?;
+    // Keep the frontend alive while the D-Bus thread delivers events.
+    std::thread::sleep(Duration::from_secs(30));
+    Ok(())
+}
+```
+
 ### Looking up a specific printer
 
 ```rust

@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Frontend::new_with_observer<F: FnMut(&Printer, PrinterUpdate) + Send + 'static>` —
+  closure-based registration for the `cpdb_printer_callback`. Backed by a
+  process-global pointer-keyed registry and unregistered automatically when
+  the [`Frontend`] is dropped.
+- `Printer::acquire_details_with` and `Printer::acquire_translations_with` —
+  closure-based completion handlers for the two `cpdb_async_callback`-driven
+  operations. Closure panics are absorbed by `catch_unwind`.
+- `PrinterUpdate` enum (`Added` / `Removed` / `StateChanged`) re-exported from
+  the crate root.
 - `Frontend::add_printer`, `Frontend::remove_printer`,
   `Frontend::refresh_printer_list` — wrappers around the corresponding C
   functions.

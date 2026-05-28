@@ -10,6 +10,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
+pub mod callbacks;
 pub mod common;
 pub mod error;
 pub mod ffi;
@@ -19,6 +20,7 @@ pub mod printer;
 pub mod settings;
 pub mod util;
 
+pub use callbacks::PrinterUpdate;
 pub use common::{init, version};
 pub use error::{CpdbError, Result};
 pub use frontend::Frontend;

@@ -20,6 +20,7 @@
 //! lock internally. If you need to dispatch printer operations from
 //! multiple threads, wrap a single printer in a [`std::sync::Mutex`].
 
+use crate::callbacks::{self, AcquireCompletion};
 use crate::error::{CpdbError, Result};
 use crate::ffi;
 use crate::frontend::Frontend;
@@ -286,13 +287,38 @@ impl<'frontend> Printer<'frontend> {
         }
     }
 
-    /// Asynchronously requests the backend to populate the printer's full
-    /// option table. Returns immediately; pass a callback through the raw
-    /// FFI if you need a completion notification.
+    /// Asynchronously asks the backend to populate the printer's full
+    /// option table. Returns immediately; no completion notification.
+    ///
+    /// Use [`Printer::acquire_details_with`] if you need to be told when
+    /// the operation finishes.
     pub fn acquire_details(&self) {
         // SAFETY: passing a null callback is documented as valid.
         unsafe {
             ffi::cpdbAcquireDetails(self.raw.as_ptr(), None, std::ptr::null_mut());
+        }
+    }
+
+    /// Asynchronously populates the option table, firing `completion` when
+    /// the backend responds.
+    ///
+    /// `completion` is invoked from cpdb-libs' D-Bus listener thread with
+    /// `success = true` when the backend reported success. Panics inside
+    /// the closure are caught and absorbed.
+    pub fn acquire_details_with<F>(&self, completion: F)
+    where
+        F: FnOnce(&Printer<'_>, bool) + Send + 'static,
+    {
+        let boxed: Box<AcquireCompletion> = Box::new(completion);
+        let user_data = callbacks::into_completion_user_data(boxed);
+        // SAFETY: `user_data` was produced for this exact callback firing;
+        // the trampoline reclaims and frees it.
+        unsafe {
+            ffi::cpdbAcquireDetails(
+                self.raw.as_ptr(),
+                Some(callbacks::acquire_trampoline),
+                user_data,
+            );
         }
     }
 
@@ -420,6 +446,9 @@ impl<'frontend> Printer<'frontend> {
     // ─── Translations ────────────────────────────────────────────────────────
 
     /// Asynchronously fetches translations for the given locale.
+    ///
+    /// Use [`Printer::acquire_translations_with`] if you need to be told
+    /// when the operation finishes.
     pub fn acquire_translations(&self, locale: &str) -> Result<()> {
         let c_locale = CString::new(locale)?;
         // SAFETY: passing a null callback is documented as valid.
@@ -429,6 +458,29 @@ impl<'frontend> Printer<'frontend> {
                 c_locale.as_ptr(),
                 None,
                 std::ptr::null_mut(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Asynchronously fetches translations, firing `completion` on success/failure.
+    ///
+    /// `completion` is invoked from cpdb-libs' D-Bus listener thread.
+    /// Panics inside the closure are caught and absorbed.
+    pub fn acquire_translations_with<F>(&self, locale: &str, completion: F) -> Result<()>
+    where
+        F: FnOnce(&Printer<'_>, bool) + Send + 'static,
+    {
+        let c_locale = CString::new(locale)?;
+        let boxed: Box<AcquireCompletion> = Box::new(completion);
+        let user_data = callbacks::into_completion_user_data(boxed);
+        // SAFETY: `user_data` was produced for this exact callback firing.
+        unsafe {
+            ffi::cpdbAcquireTranslations(
+                self.raw.as_ptr(),
+                c_locale.as_ptr(),
+                Some(callbacks::acquire_trampoline),
+                user_data,
             );
         }
         Ok(())
