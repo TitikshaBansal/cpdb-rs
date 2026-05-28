@@ -1,68 +1,96 @@
+//! Small FFI utilities shared by the higher-level modules.
+
 use crate::error::{CpdbError, Result};
 use crate::ffi;
 use libc::c_char;
 use std::ffi::{CStr, CString};
 
-/// Converts a C string pointer to an owned Rust String.
-/// Returns CpdbError::NullPointer if the pointer is null.
+/// Converts a borrowed C string into an owned `String`.
+///
+/// Returns [`CpdbError::NullPointer`] when `ptr` is null. Invalid UTF-8 is
+/// replaced with U+FFFD (lossy) — cpdb-libs strings should always be valid
+/// UTF-8, but we do not trust that strictly.
+///
+/// # Safety
+/// `ptr` must either be null or point at a NUL-terminated C string that
+/// stays valid for the duration of this call.
 pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String> {
     if ptr.is_null() {
-        Err(CpdbError::NullPointer)
-    } else {
-        unsafe { Ok(CStr::from_ptr(ptr).to_string_lossy().into_owned()) }
+        return Err(CpdbError::NullPointer);
     }
+    // SAFETY: caller guarantees `ptr` references a live NUL-terminated string.
+    Ok(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
 }
 
-/// Converts a C string pointer to an owned Rust String and frees it with g_free.
-/// Returns CpdbError::NullPointer if the pointer is null.
+/// Same as [`cstr_to_string`] but frees the underlying buffer with `g_free`.
+///
+/// Use this for return values from cpdb-libs functions that `g_strdup` their
+/// result (`cpdbGetDefault`, `cpdbGetCurrent`, `cpdbPrintFile`, ...).
+///
+/// # Safety
+/// `ptr` must be null, or a pointer returned by a GLib allocator that the
+/// caller has ownership of (so freeing it is correct).
 pub unsafe fn cstr_to_string_and_g_free(ptr: *mut c_char) -> Result<String> {
     if ptr.is_null() {
-        Err(CpdbError::NullPointer)
-    } else {
-        unsafe {
-            let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
-            glib_sys::g_free(ptr as glib_sys::gpointer);
-            Ok(s)
-        }
+        return Err(CpdbError::NullPointer);
     }
+    // SAFETY: caller guarantees ownership of a GLib-allocated string.
+    let owned = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    unsafe { glib_sys::g_free(ptr as glib_sys::gpointer) };
+    Ok(owned)
 }
 
-/// Owns both the CString backing memory and the cpdb_option_t array
-/// so that raw pointers in the options remain valid for the struct's lifetime.
+/// A pinned, owned array of `cpdb_option_t` with backing `CString` storage.
+///
+/// The strings cannot be reallocated after construction, so raw pointers
+/// embedded in the `cpdb_option_t` entries stay valid for the lifetime of
+/// the `COptions`. Allocation in `to_c_options` therefore cannot invalidate
+/// any pointer captured here.
 pub struct COptions {
-    _strings: Vec<CString>,
-    options: Vec<ffi::cpdb_option_t>,
+    // Boxed slice: the storage is fixed-length and never grows, so pointer
+    // capture is sound for the whole lifetime of the struct.
+    _strings: Box<[CString]>,
+    options: Box<[ffi::cpdb_option_t]>,
 }
 
 impl COptions {
+    /// Returns a raw mutable pointer to the underlying option array,
+    /// suitable for passing to cpdb-libs functions that expect a
+    /// `cpdb_option_t *` plus a length.
     pub fn as_mut_ptr(&mut self) -> *mut ffi::cpdb_option_t {
         self.options.as_mut_ptr()
     }
 
+    /// Number of options held.
     pub fn len(&self) -> usize {
         self.options.len()
     }
 
+    /// `true` when no options are stored.
     pub fn is_empty(&self) -> bool {
         self.options.is_empty()
     }
 }
 
-/// Converts a slice of (key, value) pairs into a COptions struct
-/// suitable for passing to cpdb-libs C functions.
+/// Converts a slice of `(name, value)` pairs into a [`COptions`] suitable
+/// for passing to cpdb-libs.
 ///
-/// The returned COptions owns all backing memory - the raw pointers
-/// inside `cpdb_option_t` remain valid as long as COptions is alive.
-pub fn to_c_options(options: &[(&str, &str)]) -> Result<COptions> {
-    let mut strings: Vec<CString> = Vec::with_capacity(options.len() * 2);
-    let mut c_options: Vec<ffi::cpdb_option_t> = Vec::with_capacity(options.len());
-
-    for (key, value) in options {
+/// The returned [`COptions`] owns its backing `CString` storage, so the
+/// raw pointers embedded in each `cpdb_option_t` remain valid for the
+/// `COptions` lifetime.
+pub fn to_c_options(pairs: &[(&str, &str)]) -> Result<COptions> {
+    let mut strings: Vec<CString> = Vec::with_capacity(pairs.len() * 2);
+    for (key, value) in pairs {
         strings.push(CString::new(*key)?);
         strings.push(CString::new(*value)?);
-        let key_ptr = strings[strings.len() - 2].as_ptr() as *mut c_char;
-        let val_ptr = strings[strings.len() - 1].as_ptr() as *mut c_char;
-        c_options.push(ffi::cpdb_option_t {
+    }
+    let strings: Box<[CString]> = strings.into_boxed_slice();
+
+    let mut options: Vec<ffi::cpdb_option_t> = Vec::with_capacity(pairs.len());
+    for i in 0..pairs.len() {
+        let key_ptr = strings[i * 2].as_ptr() as *mut c_char;
+        let val_ptr = strings[i * 2 + 1].as_ptr() as *mut c_char;
+        options.push(ffi::cpdb_option_t {
             option_name: key_ptr,
             default_value: val_ptr,
             group_name: std::ptr::null_mut(),
@@ -73,6 +101,6 @@ pub fn to_c_options(options: &[(&str, &str)]) -> Result<COptions> {
 
     Ok(COptions {
         _strings: strings,
-        options: c_options,
+        options: options.into_boxed_slice(),
     })
 }

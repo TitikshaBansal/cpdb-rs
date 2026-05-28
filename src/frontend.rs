@@ -1,338 +1,345 @@
+//! Safe wrapper around `cpdb_frontend_obj_t`.
+//!
+//! A [`Frontend`] is the central object for printer discovery. It manages
+//! a D-Bus connection, holds the backend list, and owns the hash table
+//! of discovered printers.
+//!
+//! # Threading
+//!
+//! [`Frontend`] is [`Send`] but **not** [`Sync`]. Most methods take
+//! `&self` for ergonomics but mutate the underlying C state, and
+//! cpdb-libs does not lock internally. If you need concurrent access,
+//! wrap the frontend in a [`std::sync::Mutex`].
+
 use crate::error::{CpdbError, Result};
 use crate::ffi;
 use crate::printer::Printer;
-use std::ffi::CString;
-use std::ptr;
+use std::ffi::{CStr, CString};
+use std::mem::MaybeUninit;
+use std::ptr::NonNull;
 
+/// Safe wrapper around `cpdb_frontend_obj_t`.
 pub struct Frontend {
-    raw: *mut ffi::cpdb_frontend_obj_t,
+    raw: NonNull<ffi::cpdb_frontend_obj_t>,
 }
 
+// SAFETY: `Frontend` owns its `cpdb_frontend_obj_t *`. Moving it across
+// threads is fine; concurrent access from multiple threads is not, so we
+// deliberately omit `Sync`.
 unsafe impl Send for Frontend {}
-unsafe impl Sync for Frontend {}
 
 impl Frontend {
-    #[inline]
-    pub fn as_raw(&self) -> *mut ffi::cpdb_frontend_obj_t {
-        self.raw
-    }
+    // ─── Construction ────────────────────────────────────────────────────────
 
+    /// Creates a new frontend with the default printer-update callback.
     pub fn new() -> Result<Self> {
-        unsafe {
-            let raw_frontend = ffi::cpdbGetNewFrontendObj(None);
-            if raw_frontend.is_null() {
-                Err(CpdbError::FrontendError(
-                    "cpdbGetNewFrontendObj returned null".to_string(),
-                ))
-            } else {
-                Ok(Self { raw: raw_frontend })
-            }
-        }
+        Self::new_internal(None)
     }
 
-    /// Create a frontend with a custom printer callback.
+    /// Creates a new frontend with a custom printer-update callback.
+    ///
+    /// The callback is invoked from the cpdb-libs internal D-Bus listener
+    /// thread when printers are added, removed, or change state. It must be
+    /// thread-safe and must not call back into this `Frontend`.
     pub fn new_with_callback(cb: ffi::cpdb_printer_callback) -> Result<Self> {
-        unsafe {
-            let raw_frontend = ffi::cpdbGetNewFrontendObj(cb);
-            if raw_frontend.is_null() {
-                Err(CpdbError::FrontendError(
-                    "cpdbGetNewFrontendObj returned null".to_string(),
-                ))
-            } else {
-                Ok(Self { raw: raw_frontend })
-            }
-        }
+        Self::new_internal(cb)
     }
 
-    pub fn from_raw(raw: *mut ffi::cpdb_frontend_obj_t) -> Result<Self> {
-        if raw.is_null() {
-            Err(CpdbError::NullPointer)
-        } else {
-            Ok(Self { raw })
-        }
+    fn new_internal(cb: ffi::cpdb_printer_callback) -> Result<Self> {
+        // SAFETY: `cpdbGetNewFrontendObj` is a constructor; the callback may
+        // be null.
+        let raw = unsafe { ffi::cpdbGetNewFrontendObj(cb) };
+        NonNull::new(raw)
+            .map(|raw| Self { raw })
+            .ok_or_else(|| CpdbError::FrontendError("cpdbGetNewFrontendObj returned null".into()))
     }
 
-    /// Ignore previously saved settings (call after new(), before connect_to_dbus()).
+    /// Wraps an already-allocated frontend object.
+    ///
+    /// # Safety
+    /// `raw` must be a valid pointer to a `cpdb_frontend_obj_t` obtained from
+    /// cpdb-libs, not aliased by any other Rust handle, and not yet freed.
+    /// Ownership transfers to the returned `Frontend`.
+    pub unsafe fn from_raw(raw: *mut ffi::cpdb_frontend_obj_t) -> Result<Self> {
+        NonNull::new(raw)
+            .map(|raw| Self { raw })
+            .ok_or(CpdbError::NullPointer)
+    }
+
+    /// Returns the raw pointer for use within this crate.
+    #[doc(hidden)]
+    pub fn as_raw(&self) -> *mut ffi::cpdb_frontend_obj_t {
+        self.raw.as_ptr()
+    }
+
+    // ─── Lifecycle ───────────────────────────────────────────────────────────
+
+    /// Tells the frontend to ignore the previously saved settings file.
+    ///
+    /// Must be called before [`Frontend::connect_to_dbus`] to take effect.
     pub fn ignore_last_saved_settings(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbIgnoreLastSavedSettings(self.raw);
-            }
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbIgnoreLastSavedSettings(self.raw.as_ptr()) };
     }
 
-    /// Connects the frontend to D-Bus and activates backends.
+    /// Connects to the session D-Bus and activates the print backends.
     pub fn connect_to_dbus(&self) -> Result<()> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError(
-                "Frontend raw pointer is null before calling cpdbConnectToDBus".to_string(),
-            ));
-        }
-        unsafe {
-            ffi::cpdbConnectToDBus(self.raw);
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbConnectToDBus(self.raw.as_ptr()) };
         Ok(())
     }
 
-    /// Disconnects the frontend from D-Bus.
+    /// Disconnects from D-Bus.
     pub fn disconnect_from_dbus(&self) -> Result<()> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError(
-                "Frontend raw pointer is null before calling cpdbDisconnectFromDBus".to_string(),
-            ));
-        }
-        unsafe {
-            ffi::cpdbDisconnectFromDBus(self.raw);
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbDisconnectFromDBus(self.raw.as_ptr()) };
         Ok(())
     }
 
-    /// Activate backends (rediscover without full disconnect/reconnect)
+    /// Re-activates the backends (rediscovers printers without disconnecting).
     pub fn activate_backends(&self) {
-        unsafe {
-            ffi::cpdbActivateBackends(self.raw);
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbActivateBackends(self.raw.as_ptr()) };
     }
 
-    /// Start the background thread that periodically checks for new backends.
+    /// Starts the background thread that periodically refreshes the backend list.
     pub fn start_backend_list_refreshing(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbStartBackendListRefreshing(self.raw);
-            }
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbStartBackendListRefreshing(self.raw.as_ptr()) };
     }
 
-    /// Stop the background thread. Blocks until the thread joins.
+    /// Stops the backend-list refreshing thread; blocks until it joins.
     pub fn stop_backend_list_refreshing(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbStopBackendListRefreshing(self.raw);
-            }
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbStopBackendListRefreshing(self.raw.as_ptr()) };
     }
 
-    /// Starts the printer listing process and returns a new Frontend instance configured for it.
-    pub fn start_listing(printer_callback: ffi::cpdb_printer_callback) -> Result<Self> {
-        unsafe {
-            let new_frontend_ptr = ffi::cpdbStartListingPrinters(printer_callback);
-            if new_frontend_ptr.is_null() {
-                Err(CpdbError::FrontendError(
-                    "cpdbStartListingPrinters returned null, failed to start listing".to_string(),
-                ))
-            } else {
-                Ok(Frontend {
-                    raw: new_frontend_ptr,
-                })
-            }
-        }
+    /// Starts the printer-listing flow (`cpdbStartListingPrinters`), creating
+    /// a fresh frontend bound to the supplied callback.
+    pub fn start_listing(cb: ffi::cpdb_printer_callback) -> Result<Self> {
+        // SAFETY: callback may be null per upstream docs.
+        let raw = unsafe { ffi::cpdbStartListingPrinters(cb) };
+        NonNull::new(raw)
+            .map(|raw| Self { raw })
+            .ok_or_else(|| CpdbError::FrontendError("cpdbStartListingPrinters returned null".into()))
     }
 
-    /// Stops the printer listing process for the given frontend object.
-    pub fn stop_listing_printers(&self) -> Result<()> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError(
-                "Frontend raw pointer is null before calling cpdbStopListingPrinters".to_string(),
-            ));
-        }
-        unsafe {
-            ffi::cpdbStopListingPrinters(self.raw);
-        }
-        Ok(())
+    /// Stops the printer-listing flow.
+    pub fn stop_listing_printers(&self) {
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbStopListingPrinters(self.raw.as_ptr()) };
     }
 
-    /// Hide remote printers.
+    // ─── Visibility toggles ──────────────────────────────────────────────────
+
+    /// Hides remote printers from subsequent listings.
     pub fn hide_remote_printers(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbHideRemotePrinters(self.raw);
-            }
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbHideRemotePrinters(self.raw.as_ptr()) };
     }
 
-    /// Unhide remote printers.
+    /// Unhides remote printers.
     pub fn unhide_remote_printers(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbUnhideRemotePrinters(self.raw);
-            }
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbUnhideRemotePrinters(self.raw.as_ptr()) };
     }
 
-    /// Hide temporary printers.
+    /// Hides temporary printers from subsequent listings.
     pub fn hide_temporary_printers(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbHideTemporaryPrinters(self.raw);
-                (*self.raw).hide_temporary = 1;
-            }
-        }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbHideTemporaryPrinters(self.raw.as_ptr()) };
     }
 
-    /// Unhide temporary printers.
+    /// Unhides temporary printers.
     pub fn unhide_temporary_printers(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbUnhideTemporaryPrinters(self.raw);
-                (*self.raw).hide_temporary = 0;
-            }
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbUnhideTemporaryPrinters(self.raw.as_ptr()) };
+    }
+
+    // ─── Lookup ──────────────────────────────────────────────────────────────
+
+    /// Finds a printer by `(id, backend)`.
+    ///
+    /// The returned [`Printer`] borrows from `self`.
+    pub fn find_printer<'f>(&'f self, printer_id: &str, backend_name: &str) -> Result<Printer<'f>> {
+        let c_id = CString::new(printer_id)?;
+        let c_backend = CString::new(backend_name)?;
+        // SAFETY: pointers are non-null; the CStrings outlive the call.
+        let raw = unsafe {
+            ffi::cpdbFindPrinterObj(self.raw.as_ptr(), c_id.as_ptr(), c_backend.as_ptr())
+        };
+        if raw.is_null() {
+            Err(CpdbError::NotFound(format!(
+                "printer '{printer_id}' on backend '{backend_name}'"
+            )))
+        } else {
+            Printer::from_raw_borrowed(raw)
         }
     }
 
-    /// Find a printer by id and backend name.
-    pub fn find_printer(&self, printer_id: &str, backend_name: &str) -> Result<Printer> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Null frontend".to_string()));
-        }
-        let c_id = CString::new(printer_id)
-            .map_err(|_| CpdbError::FrontendError("Invalid printer_id".to_string()))?;
-        let c_backend = CString::new(backend_name)
-            .map_err(|_| CpdbError::FrontendError("Invalid backend_name".to_string()))?;
-        unsafe {
-            let raw_printer = ffi::cpdbFindPrinterObj(self.raw, c_id.as_ptr(), c_backend.as_ptr());
-            if raw_printer.is_null() {
-                Err(CpdbError::PrintError(format!(
-                    "Printer '{}' on backend '{}' not found",
-                    printer_id, backend_name
-                )))
-            } else {
-                Printer::from_raw_borrowed(raw_printer)
-            }
+    /// Returns the user-default printer, if one is set.
+    pub fn get_default_printer(&self) -> Result<Printer<'_>> {
+        // SAFETY: pointer is non-null.
+        let raw = unsafe { ffi::cpdbGetDefaultPrinter(self.raw.as_ptr()) };
+        if raw.is_null() {
+            Err(CpdbError::NotFound("default printer".into()))
+        } else {
+            Printer::from_raw_borrowed(raw)
         }
     }
 
-    /// Get the default printer.
-    pub fn get_default_printer(&self) -> Result<Printer> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Null frontend".to_string()));
-        }
-        unsafe {
-            let raw = ffi::cpdbGetDefaultPrinter(self.raw);
-            if raw.is_null() {
-                Err(CpdbError::FrontendError(
-                    "No default printer found".to_string(),
-                ))
-            } else {
-                Printer::from_raw_borrowed(raw)
-            }
-        }
-    }
-
-    /// Get the default printer for a specific backend.
-    pub fn get_default_printer_for_backend(&self, backend_name: &str) -> Result<Printer> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError("Null frontend".to_string()));
-        }
-        let c_backend = CString::new(backend_name)
-            .map_err(|_| CpdbError::FrontendError("Invalid backend_name".to_string()))?;
-        unsafe {
-            let raw = ffi::cpdbGetDefaultPrinterForBackend(self.raw, c_backend.as_ptr());
-            if raw.is_null() {
-                Err(CpdbError::FrontendError(format!(
-                    "No default printer for backend '{}'",
-                    backend_name
-                )))
-            } else {
-                Printer::from_raw_borrowed(raw)
-            }
+    /// Returns the default printer for a specific backend, if one is set.
+    pub fn get_default_printer_for_backend(&self, backend_name: &str) -> Result<Printer<'_>> {
+        let c_backend = CString::new(backend_name)?;
+        // SAFETY: pointer is non-null; the CString outlives the call.
+        let raw = unsafe {
+            ffi::cpdbGetDefaultPrinterForBackend(self.raw.as_ptr(), c_backend.as_ptr())
+        };
+        if raw.is_null() {
+            Err(CpdbError::NotFound(format!(
+                "default printer for backend '{backend_name}'"
+            )))
+        } else {
+            Printer::from_raw_borrowed(raw)
         }
     }
 
-    /// Refresh printers from all backends.
-    pub fn get_all_printers(&self) {
-        if !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbGetAllPrinters(self.raw);
-            }
-        }
+    /// Asks every backend to refresh its printer list.
+    pub fn refresh_printers(&self) {
+        // SAFETY: pointer is non-null.
+        unsafe { ffi::cpdbGetAllPrinters(self.raw.as_ptr()) };
     }
 
-    /// Get all currently known printers by iterating the internal hash table.
-    pub fn get_printers(&self) -> Result<Vec<Printer>> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError(
-                "Frontend raw pointer is null for get_printers".to_string(),
+    /// Adds an owned printer to the frontend's table.
+    ///
+    /// Takes ownership of the printer — cpdb-libs becomes responsible for
+    /// freeing it. The argument must be an owned [`Printer`] (e.g. from
+    /// [`Printer::load_from_file`]); attempting to insert a borrowed
+    /// printer is rejected to prevent the same pointer ending up in two
+    /// hash tables.
+    ///
+    /// Returns `Ok(true)` when the printer was inserted; `Ok(false)` when
+    /// it was rejected by the backend.
+    ///
+    /// [`Printer::load_from_file`]: crate::Printer::load_from_file
+    pub fn add_printer(&self, printer: Printer<'static>) -> Result<bool> {
+        if !printer.is_owned() {
+            return Err(CpdbError::PrinterError(
+                "add_printer requires an owned Printer".into(),
             ));
         }
+        // SAFETY: ownership of the raw pointer is transferred to cpdb-libs
+        // by forgetting the Rust `Printer` (so its Drop does not run).
+        let raw = printer.as_raw();
+        std::mem::forget(printer);
+        let added = unsafe { ffi::cpdbAddPrinter(self.raw.as_ptr(), raw) };
+        Ok(added != 0)
+    }
+
+    /// Removes a printer from the frontend's table by `(id, backend)`.
+    ///
+    /// Returns the *owned* removed printer when present, so the caller can
+    /// inspect it before dropping (cpdb-libs hands ownership back).
+    pub fn remove_printer(
+        &self,
+        printer_id: &str,
+        backend_name: &str,
+    ) -> Result<Option<Printer<'static>>> {
+        let c_id = CString::new(printer_id)?;
+        let c_backend = CString::new(backend_name)?;
+        // SAFETY: pointers are non-null; the CStrings outlive the call.
+        let raw = unsafe {
+            ffi::cpdbRemovePrinter(self.raw.as_ptr(), c_id.as_ptr(), c_backend.as_ptr())
+        };
+        if raw.is_null() {
+            Ok(None)
+        } else {
+            Printer::from_raw_owned(raw).map(Some)
+        }
+    }
+
+    /// Asks a specific backend to refresh its printer list. Returns `true` on success.
+    pub fn refresh_printer_list(&self, backend_name: &str) -> Result<bool> {
+        let c_backend = CString::new(backend_name)?;
+        // SAFETY: pointers are non-null; the CString outlives the call.
+        let ok =
+            unsafe { ffi::cpdbRefreshPrinterList(self.raw.as_ptr(), c_backend.as_ptr()) };
+        Ok(ok)
+    }
+
+    /// Returns every printer currently known by walking the internal hash table.
+    ///
+    /// The returned printers borrow from `self`.
+    pub fn get_printers(&self) -> Result<Vec<Printer<'_>>> {
+        // SAFETY: dereferencing the printer table field is sound; we only
+        // read borrowed pointers and never write through them.
+        let table = unsafe { (*self.raw.as_ptr()).printer } as *mut glib_sys::GHashTable;
+        if table.is_null() {
+            return Ok(Vec::new());
+        }
+
+        let mut printers: Vec<Printer<'_>> = Vec::new();
+        // SAFETY: iterator is initialised on the stack and iterated
+        // synchronously; the table is not mutated during this loop.
         unsafe {
-            let hash_table = (*self.raw).printer as *mut glib_sys::GHashTable;
-            if hash_table.is_null() {
-                return Ok(Vec::new());
-            }
+            let mut iter = MaybeUninit::<glib_sys::GHashTableIter>::uninit();
+            glib_sys::g_hash_table_iter_init(iter.as_mut_ptr(), table);
+            let mut iter = iter.assume_init();
 
-            let mut printers: Vec<Printer> = Vec::new();
-            let mut iter: glib_sys::GHashTableIter = std::mem::zeroed();
-            let mut _key: glib_sys::gpointer = std::ptr::null_mut();
+            let mut key: glib_sys::gpointer = std::ptr::null_mut();
             let mut value: glib_sys::gpointer = std::ptr::null_mut();
-
-            glib_sys::g_hash_table_iter_init(&mut iter, hash_table);
-            while glib_sys::g_hash_table_iter_next(&mut iter, &mut _key, &mut value)
-                != glib_sys::GFALSE
-            {
-                let raw_printer = value as *mut ffi::cpdb_printer_obj_t;
-                if !raw_printer.is_null()
-                    && let Ok(p) = Printer::from_raw_borrowed(raw_printer)
-                {
+            while glib_sys::g_hash_table_iter_next(&mut iter, &mut key, &mut value) != 0 {
+                let raw = value as *mut ffi::cpdb_printer_obj_t;
+                if let Ok(p) = Printer::from_raw_borrowed(raw) {
                     printers.push(p);
                 }
             }
-            Ok(printers)
         }
+        Ok(printers)
     }
 
-    /// Find a printer by name (linear scan of all printers).
-    /// If multiple printers share the same name across backends,
-    /// the first match is returned.
-    pub fn get_printer(&self, name: &str) -> Result<Printer> {
-        if self.raw.is_null() {
-            return Err(CpdbError::FrontendError(
-                "Frontend raw pointer is null for get_printer".to_string(),
-            ));
+    /// Looks up the first printer whose `name` field equals the argument.
+    ///
+    /// When multiple printers share a name across backends, the first one
+    /// encountered during hash-table iteration wins. Prefer
+    /// [`Frontend::find_printer`] when you can supply a backend name.
+    pub fn get_printer<'f>(&'f self, name: &str) -> Result<Printer<'f>> {
+        // SAFETY: dereferencing the printer table field is sound.
+        let table = unsafe { (*self.raw.as_ptr()).printer } as *mut glib_sys::GHashTable;
+        if table.is_null() {
+            return Err(CpdbError::NotFound(format!("printer '{name}'")));
         }
+        let needle = name.as_bytes();
+
+        // SAFETY: see `get_printers`.
         unsafe {
-            let hash_table = (*self.raw).printer as *mut glib_sys::GHashTable;
-            if hash_table.is_null() {
-                return Err(CpdbError::FrontendError(format!(
-                    "No printers available when looking for '{}'",
-                    name
-                )));
-            }
+            let mut iter = MaybeUninit::<glib_sys::GHashTableIter>::uninit();
+            glib_sys::g_hash_table_iter_init(iter.as_mut_ptr(), table);
+            let mut iter = iter.assume_init();
 
-            let mut iter: glib_sys::GHashTableIter = std::mem::zeroed();
-            let mut _key: glib_sys::gpointer = std::ptr::null_mut();
+            let mut key: glib_sys::gpointer = std::ptr::null_mut();
             let mut value: glib_sys::gpointer = std::ptr::null_mut();
-
-            glib_sys::g_hash_table_iter_init(&mut iter, hash_table);
-            while glib_sys::g_hash_table_iter_next(&mut iter, &mut _key, &mut value)
-                != glib_sys::GFALSE
-            {
-                let raw_printer = value as *mut ffi::cpdb_printer_obj_t;
-                if !raw_printer.is_null() {
-                    let printer_name = (*raw_printer).name;
-                    if !printer_name.is_null() {
-                        let c_name = std::ffi::CStr::from_ptr(printer_name);
-                        if c_name.to_string_lossy() == name {
-                            return Printer::from_raw_borrowed(raw_printer);
-                        }
-                    }
+            while glib_sys::g_hash_table_iter_next(&mut iter, &mut key, &mut value) != 0 {
+                let raw = value as *mut ffi::cpdb_printer_obj_t;
+                if raw.is_null() {
+                    continue;
+                }
+                let name_ptr = (*raw).name;
+                if name_ptr.is_null() {
+                    continue;
+                }
+                if CStr::from_ptr(name_ptr).to_bytes() == needle {
+                    return Printer::from_raw_borrowed(raw);
                 }
             }
-
-            Err(CpdbError::FrontendError(format!(
-                "Printer '{}' not found",
-                name
-            )))
         }
+        Err(CpdbError::NotFound(format!("printer '{name}'")))
     }
 }
 
 impl Drop for Frontend {
     fn drop(&mut self) {
-        unsafe {
-            if !self.raw.is_null() {
-                ffi::cpdbDeleteFrontendObj(self.raw);
-                self.raw = ptr::null_mut();
-            }
-        }
+        // SAFETY: we own the pointer.
+        unsafe { ffi::cpdbDeleteFrontendObj(self.raw.as_ptr()) };
     }
 }

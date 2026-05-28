@@ -6,71 +6,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
-- `Frontend::connect_to_dbus`, `disconnect_from_dbus`, `activate_backends`
-- `Frontend::get_printers` and `get_all_printers` via `GHashTableIter` — no callback required
-- `Frontend::find_printer` — O(1) lookup by printer name and backend using `cpdbFindPrinterObj`
-- `Frontend::get_printer` — linear search by printer name
-- `Frontend::get_default_printer`, `get_default_printer_for_backend`
-- `Frontend::hide_remote_printers`, `unhide_remote_printers`, `hide_temporary_printers`, `unhide_temporary_printers`
-- `Frontend::ignore_last_saved_settings`
-- `Frontend::start_backend_list_refreshing`, `stop_backend_list_refreshing`
-- `Printer::add_setting`, `clear_setting`, `get_setting`, `get_current`
-- `Printer::get_default` — gets the default value for a named option
-- `Printer::print_file` — submits a file and returns the job ID string
-- `Printer::set_user_default`, `set_system_default`
-- `Printer::get_media_size`
-- `Printer::get_option_translation`, `get_choice_translation`, `get_group_translation`, `get_all_translations`
-- `Printer::pickle_to_file` — serialises printer to disk for later resurrection
-- `CpdbError::PrinterError` and `CpdbError::PrintError` variants
-- `CpdbError` is now `#[non_exhaustive]` — adding variants in future minor versions will not be a breaking change
-- `examples/cpdb_text_frontend.rs` — full command parity with the C `cpdb-text-frontend` reference tool; `main()` is free of `unsafe` blocks
-- `Cargo.toml`: added `description`, `keywords`, `categories`, `homepage`, `documentation`, `readme`, `rust-version` for crates.io publication
-- `OptionInfo` — owned Rust type representing a single printer option with name,
-  default value, group, and supported values
-- `OptionsCollection` — owned collection of all printer options, constructed by safely
-  iterating `cpdb_options_t.table` (GHashTable) once during construction; holds no raw
-  pointers after `from_raw()` returns
-- `Printer::get_options_collection()` — calls `cpdbAcquireDetails` then returns an
-  `OptionsCollection` with zero `unsafe` blocks at call site
-- `cmd_get_all_options` in `cpdb_text_frontend.rs` rewritten using
-  `get_options_collection()` — zero `unsafe` blocks remaining in that function
+- `Printer::submit_job` previously discarded its options array (the parameter was
+  leading-underscored). Options are now applied via `cpdbAddSettingToPrinter`
+  before submission, matching the documented behaviour.
+- Replaced `libc::free` with `glib_sys::g_free` for cpdb-libs return values that
+  are `g_strdup`'d (fixes undefined behaviour on platforms where
+  `g_malloc != malloc`).
+- `Printer::get_option` no longer returns the sentinel string `"NA"` —
+  unset options now resolve to `Ok(None)`.
+- README, CHANGELOG, and example code references to `printer.print_file(...)`,
+  `CpdbError::NotFound`, and the option-translation signature now match the
+  shipping API.
 
 ### Changed
 
-- `Printer` now carries an `owned: bool` field distinguishing frontend-managed printers (`owned=false`) from printers loaded via `load_from_file` (`owned=true`)
-- `Printer::Clone` always produces `owned=false` — a borrowing alias — preventing unsound double-free
-- `hide_remote_printers` / `unhide_remote_printers` / `hide_temporary_printers` / `unhide_temporary_printers` no longer write raw struct fields after the C call (was redundant and dangerous)
-
-### Fixed
-
-- `Printer::Drop` now calls `cpdbDeletePrinterObj` when `owned=true`, fixing a memory leak on printers loaded from file
-- `get_updated_state` leaked the `g_strdup`'d string returned by `cpdbGetState` on every call — now correctly uses `cstr_to_string_and_g_free`
-- `util::to_c_options` use-after-free: `CString`s were dropped while raw pointers into them were still held by the returned array; fixed by introducing a `COptions` struct that owns both the strings and the pointer array together
-- Duplicate `CpdbError::cstr_to_string` removed from `error.rs`; canonical version lives in `util.rs`
-
-### Infrastructure
-
-- CI Ubuntu test step: added `LD_LIBRARY_PATH=/usr/lib:/usr/local/lib` to ensure `libcpdb.so` symbols resolve at runtime (fixes `cpdbGetAbsolutePath` lookup error; root cause fixed upstream in OpenPrinting/cpdb-libs#88)
-- CI macOS job: rewritten with `CPDB_NO_LINK=1` — runs `make || true` to generate `backend-interface.h` (included by `cpdb.h:19`, only exists after `make`), then verifies bindgen + compile only; no linking required on macOS
-- `build.rs`: `CPDB_NO_LINK` env var bypass skips all link directives; `BINDGEN_EXTRA_CLANG_ARGS` forwarded to the bindgen builder
-
-## [0.1.0] - 2024-01-XX
+- **BREAKING:** `Printer` now carries a lifetime parameter tied to its
+  `Frontend`. Borrowed printers cannot outlive their frontend — the borrow
+  checker enforces this. `Printer::load_from_file` returns a `Printer<'static>`.
+- **BREAKING:** `Printer::print_single_file` was renamed to
+  [`Printer::print_file`] to match `cpdbPrintFile`.
+- **BREAKING:** `Printer::submit_job` now returns the job ID string
+  (previously returned `()`).
+- **BREAKING:** `Printer::get_option`, `Printer::get_media`, and
+  `Printer::get_setting` return `Result<Option<String>>` instead of using
+  ad-hoc sentinel strings.
+- **BREAKING:** `Printer::get_media_size` returns a [`MediaSize`] struct;
+  `Printer::get_media_margins` returns a [`Margins`] of [`Margin`]s rather
+  than a formatted string. The new types expose every margin entry, not just
+  the first one.
+- **BREAKING:** `Settings::clear_setting` returns `Result<bool>` —
+  `true` when the key existed before this call.
+- **BREAKING:** `Settings::serialize_to_gvariant` removed from the public API
+  (it leaked a raw `*mut GVariant`).
+- **BREAKING:** `Printer::set_user_default` / `set_system_default` now return
+  `Result<bool>`.
+- **BREAKING:** `Frontend::from_raw` is now `unsafe fn`.
+- **BREAKING:** `Frontend::Sync` removed. Methods take `&self` for ergonomics
+  but mutate C state; concurrent access is unsound. `Frontend` is still `Send`.
+- **BREAKING:** `Printer` no longer implements `Send`/`Sync`.
+- **BREAKING:** `CpdbError` gained `NotFound` and `PrinterError` variants; the
+  unused `CupsError`, `InvalidStatus`, `Unsupported` variants and the
+  misleading `from_status` helper were removed.
+- `Frontend::get_printer` now compares names as raw bytes (no
+  `to_string_lossy` allocation per printer).
 
 ### Added
 
-- Initial release of cpdb-rs
-- FFI bindings generated by bindgen against cpdb-libs headers
-- `Frontend` — wrapper around `cpdb_frontend_obj_t` with D-Bus lifecycle management
-- `Printer` — wrapper around `cpdb_printer_obj_t` with field accessors and job submission
-- `Settings` — wrapper around `cpdb_settings_t` with add/clear/copy/save/load
-- `Options` / `Media` — wrapper types for printer option and media structs
-- `common::init()` and `common::version()` — library initialisation and version query
-- `CpdbError` — unified error type using `thiserror`
-- `examples/basic_usage.rs` — minimal printer listing and file print example
-- `examples/cli_printer_manager.rs` — interactive CLI for printer management
-- Unit and integration test scaffolding
-- GitHub Actions CI pipeline (Ubuntu)
-- Cross-platform build support via `build.rs` with `pkg-config` and `bindgen`
-- D-Bus integration and memory-safe Rust abstractions over the C API
+- `Frontend::add_printer`, `Frontend::remove_printer`,
+  `Frontend::refresh_printer_list` — wrappers around the corresponding C
+  functions.
+- `Frontend::refresh_printers` — renamed wrapper around `cpdbGetAllPrinters`
+  (was `get_all_printers`).
+- `Margin`, `Margins`, `MediaSize` — structured replacements for the formatted
+  strings previously returned by media accessors.
+
+### Removed
+
+- `cpdb_rs::PrintJob` and `cpdb_rs::Backend` stub types. The cpdb-libs C API
+  does not expose a separate job or backend type on master; print job
+  submission flows through [`Printer::print_file`] / [`Printer::submit_job`].
+- Phantom symbols `cpdbNewPrintJob`, `cpdbSubmitPrintJobWithFile`,
+  `cpdbCancelJobById`, `cpdbDeletePrintJob`, `cpdbGetNewBackendObj`,
+  `cpdbSubmitJob`, `cpdbDeleteBackendObj` removed from the bindgen
+  allowlist; they do not exist upstream and bindgen was silently dropping
+  them.
+- `crossbeam-channel` dependency (unused).
+
+### Infrastructure
+
+- `build.rs` now prefers `pkg-config` over the hard-coded fallback path
+  list, drops the architecture-specific `/usr/lib/x86_64-linux-gnu` guess,
+  and emits a `cargo:warning` when neither pkg-config nor `CPDB_LIBS_PATH`
+  produces a hit.
+- `Cargo.toml` declares `links = "cpdb"`, removes the unused
+  `frontend`/`backend` features, and adds `docs.rs` metadata.
+- CI now runs `cargo fmt --check` and `cargo clippy -D warnings`.
+
+## [0.1.0] - 2024-01-XX
+
+Initial pre-release. See git history for details.

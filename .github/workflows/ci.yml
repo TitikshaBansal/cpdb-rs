@@ -5,12 +5,21 @@ on:
   pull_request:
 
 jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
   build-ubuntu:
-    name: Build (ubuntu-latest)
+    name: Build & test (ubuntu-latest)
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
-      CPDB_LINK_BACKEND: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -34,17 +43,19 @@ jobs:
           sudo make install
           sudo ldconfig
 
-      - name: Provide headers path for bindgen
-        run: echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
-
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
 
       - name: Build (all targets)
         run: cargo build --all-targets --verbose
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run tests
         env:
@@ -60,10 +71,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install headers for bindgen
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libglib2.0-dev build-essential pkg-config autoconf automake libtool libtool-bin gettext autopoint
+
       - name: Build and install cpdb-libs (for headers)
         run: |
           git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
@@ -73,15 +86,14 @@ jobs:
           make -j"$(nproc)"
           sudo make install
           sudo ldconfig
-          cd -
-          echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> $GITHUB_ENV
+
       - name: Docs
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps -p cpdb-rs
 
   audit:
-    name: Security Audit
+    name: Security audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,8 +108,8 @@ jobs:
     runs-on: macos-latest
     env:
       # Skip rustc-link-lib directives — cpdb-libs is not fully installed.
-      # Only verifies bindgen can parse the headers and the crate compiles;
-      # actual linking is tested on Ubuntu.
+      # Verifies bindgen can parse the headers and the crate compiles;
+      # linking is exercised on Ubuntu.
       CPDB_NO_LINK: "1"
     steps:
       - uses: actions/checkout@v4
@@ -116,8 +128,6 @@ jobs:
           autoreconf -fi
           ./configure --prefix=/usr/local || true
           # Run make to generate auto-generated headers (e.g. backend-interface.h).
-          # cpdb.h includes backend-interface.h which only exists after make runs.
-          # Allow failure — we only need the headers, not a successful link.
           make -j$(sysctl -n hw.logicalcpu) || true
           echo "CPDB_LIBS_PATH=$HOME/cpdb-libs" >> "$GITHUB_ENV"
           echo "BINDGEN_EXTRA_CLANG_ARGS=-I$HOME/cpdb-libs -I$HOME/cpdb-libs/cpdb" >> "$GITHUB_ENV"
@@ -127,5 +137,3 @@ jobs:
 
       - name: Build Rust library (bindgen + compile, no link)
         run: cargo build --lib --verbose
-
-

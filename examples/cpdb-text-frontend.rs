@@ -1,7 +1,11 @@
-use cpdb_rs::{init, version, Frontend};
+//! `cpdb-text-frontend` port: an interactive driver for cpdb-rs.
+//!
+//! Single-threaded — cpdb-libs spawns its own background thread for
+//! backend refreshing, but the Rust caller stays on one thread so we
+//! never alias the `Frontend` from two Rust contexts at once.
+
+use cpdb_rs::{Frontend, init, version};
 use std::io::{self, BufRead, Write};
-use std::sync::Arc;
-use std::thread;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init();
@@ -11,24 +15,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cpdb-libs version: {}", v);
     }
 
-    let frontend = Arc::new(Frontend::new()?);
+    let frontend = Frontend::new()?;
     frontend.ignore_last_saved_settings();
+    frontend.connect_to_dbus()?;
 
-    let control_frontend = Arc::clone(&frontend);
-    let control_thread = thread::spawn(move || {
-        if let Err(e) = control_frontend.connect_to_dbus() {
-            eprintln!("Failed to connect to D-Bus: {}", e);
-            return;
-        }
-
-        // get_all_printers calls `cpdbGetAllPrinters` which prints via
-        // `cpdbPrintBasicOptions`
-        control_frontend.get_all_printers();
-        run_command_loop(&control_frontend);
-    });
+    // `cpdbGetAllPrinters` prints via `cpdbPrintBasicOptions`.
+    frontend.refresh_printers();
 
     frontend.start_backend_list_refreshing();
-    control_thread.join().unwrap();
+    run_command_loop(&frontend);
     frontend.stop_backend_list_refreshing();
 
     Ok(())
@@ -83,7 +78,7 @@ fn run_command_loop(frontend: &Frontend) {
                 println!("Unhiding temporary printers.");
             }
             "get-all-printers" => {
-                frontend.get_all_printers();
+                frontend.refresh_printers();
             }
             "get-default-printer" => match frontend.get_default_printer() {
                 Ok(p) => println!(
@@ -108,13 +103,11 @@ fn run_command_loop(frontend: &Frontend) {
                     eprintln!("Usage: set-user-default-printer <printer id> <backend name>");
                 } else {
                     match frontend.find_printer(parts[1], parts[2]) {
-                        Ok(p) => {
-                            if p.set_user_default() {
-                                println!("Set printer as user default");
-                            } else {
-                                println!("Couldn't set printer as user default");
-                            }
-                        }
+                        Ok(p) => match p.set_user_default() {
+                            Ok(true) => println!("Set printer as user default"),
+                            Ok(false) => println!("Couldn't set printer as user default"),
+                            Err(e) => eprintln!("{}", e),
+                        },
                         Err(e) => eprintln!("{}", e),
                     }
                 }
@@ -124,13 +117,11 @@ fn run_command_loop(frontend: &Frontend) {
                     eprintln!("Usage: set-system-default-printer <printer id> <backend name>");
                 } else {
                     match frontend.find_printer(parts[1], parts[2]) {
-                        Ok(p) => {
-                            if p.set_system_default() {
-                                println!("Set printer as system default");
-                            } else {
-                                println!("Couldn't set printer as system default");
-                            }
-                        }
+                        Ok(p) => match p.set_system_default() {
+                            Ok(true) => println!("Set printer as system default"),
+                            Ok(false) => println!("Couldn't set printer as system default"),
+                            Err(e) => eprintln!("{}", e),
+                        },
                         Err(e) => eprintln!("{}", e),
                     }
                 }
@@ -142,7 +133,7 @@ fn run_command_loop(frontend: &Frontend) {
                     match frontend.find_printer(parts[2], parts[3]) {
                         Ok(p) => {
                             p.add_setting("copies", "3").ok();
-                            match p.print_single_file(parts[1]) {
+                            match p.print_file(parts[1]) {
                                 Ok(id) => println!("Job submitted. ID: {}", id),
                                 Err(e) => eprintln!("Print failed: {}", e),
                             }
@@ -268,7 +259,7 @@ fn run_command_loop(frontend: &Frontend) {
                 } else {
                     match frontend.find_printer(parts[2], parts[3]) {
                         Ok(p) => match p.get_media_size(parts[1]) {
-                            Ok((w, l)) => println!("{}x{}", w, l),
+                            Ok(size) => println!("{}x{}", size.width, size.length),
                             Err(e) => eprintln!("{}", e),
                         },
                         Err(e) => eprintln!("{}", e),
@@ -495,15 +486,13 @@ fn cmd_get_media_margins(
     backend_name: &str,
 ) {
     match frontend.find_printer(printer_id, backend_name) {
-        Ok(p) => unsafe {
-            let c_media = std::ffi::CString::new(media_name).unwrap();
-            let mut margins: *mut cpdb_rs::ffi::cpdb_margin_t = std::ptr::null_mut();
-            let num =
-                cpdb_rs::ffi::cpdbGetMediaMargins(p.as_raw(), c_media.as_ptr(), &mut margins);
-            for i in 0..num {
-                let m = &*margins.offset(i as isize);
-                println!("{} {} {} {}", m.left, m.right, m.top, m.bottom);
+        Ok(p) => match p.get_media_margins(media_name) {
+            Ok(margins) => {
+                for m in &margins.0 {
+                    println!("{} {} {} {}", m.left, m.right, m.top, m.bottom);
+                }
             }
+            Err(e) => eprintln!("{}", e),
         },
         Err(e) => eprintln!("{}", e),
     }

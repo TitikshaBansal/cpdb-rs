@@ -1,265 +1,151 @@
+//! Small CLI for inspecting cpdb-rs from the shell.
+//!
+//! Usage:
+//!   cli_printer_manager list
+//!   cli_printer_manager info <printer_name>
+//!   cli_printer_manager print <printer_name> <file_path>
+//!   cli_printer_manager options <printer_name>
+//!   cli_printer_manager media <printer_name>
+//!   cli_printer_manager save-config <printer_name> <config_file>
+//!   cli_printer_manager load-config <config_file>
+
 use cpdb_rs::{Frontend, Printer, init, version};
 use std::env;
 use std::fs;
-// use std::io; // retained if future interactive features are added
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🖨️  CPDB Rust CLI Printer Manager");
-    println!("=====================================");
+type ExResult = Result<(), Box<dyn std::error::Error>>;
 
-    // Initialize the library
+fn main() -> ExResult {
+    println!("cpdb-rs CLI printer manager");
     init();
-    println!("✓ CPDB library initialized");
 
-    // Show version
     match version() {
-        Ok(v) => println!("✓ CPDB version: {}", v),
-        Err(e) => eprintln!("✗ Failed to get version: {}", e),
+        Ok(v) => println!("cpdb-libs version: {v}"),
+        Err(e) => eprintln!("could not read cpdb-libs version: {e}"),
     }
 
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        print_usage();
-        return Ok(());
-    }
+    let prog = args.first().cloned().unwrap_or_else(|| "cli".into());
+    let cmd = match args.get(1).map(String::as_str) {
+        Some(c) => c,
+        None => {
+            print_usage(&prog);
+            return Ok(());
+        }
+    };
 
-    match args[1].as_str() {
+    match cmd {
         "list" => list_printers(),
-        "info" => {
-            if args.len() < 3 {
-                eprintln!("Usage: {} info <printer_name>", args[0]);
-                return Ok(());
-            }
-            show_printer_info(&args[2])
-        }
-        "print" => {
-            if args.len() < 4 {
-                eprintln!("Usage: {} print <printer_name> <file_path>", args[0]);
-                return Ok(());
-            }
-            print_file(&args[2], &args[3])
-        }
-        "options" => {
-            if args.len() < 3 {
-                eprintln!("Usage: {} options <printer_name>", args[0]);
-                return Ok(());
-            }
-            show_printer_options(&args[2])
-        }
-        "media" => {
-            if args.len() < 3 {
-                eprintln!("Usage: {} media <printer_name>", args[0]);
-                return Ok(());
-            }
-            show_printer_media(&args[2])
-        }
-        "save-config" => {
-            if args.len() < 4 {
-                eprintln!(
-                    "Usage: {} save-config <printer_name> <config_file>",
-                    args[0]
-                );
-                return Ok(());
-            }
-            save_printer_config(&args[2], &args[3])
-        }
-        "load-config" => {
-            if args.len() < 3 {
-                eprintln!("Usage: {} load-config <config_file>", args[0]);
-                return Ok(());
-            }
-            load_printer_config(&args[2])
-        }
-        _ => {
-            eprintln!("Unknown command: {}", args[1]);
-            print_usage();
+        "info" => with_arg(&args, 2, |name| show_printer_info(name)),
+        "print" => with_two_args(&args, |p, f| print_file(p, f)),
+        "options" => with_arg(&args, 2, |name| show_printer_options(name)),
+        "media" => with_arg(&args, 2, |name| show_printer_media(name)),
+        "save-config" => with_two_args(&args, |p, f| save_printer_config(p, f)),
+        "load-config" => with_arg(&args, 2, |f| load_printer_config(f)),
+        other => {
+            eprintln!("unknown command: {other}");
+            print_usage(&prog);
             Ok(())
         }
     }
 }
 
-fn print_usage() {
+fn with_arg(args: &[String], idx: usize, f: impl FnOnce(&str) -> ExResult) -> ExResult {
+    match args.get(idx) {
+        Some(arg) => f(arg),
+        None => {
+            eprintln!("missing argument");
+            Ok(())
+        }
+    }
+}
+
+fn with_two_args(args: &[String], f: impl FnOnce(&str, &str) -> ExResult) -> ExResult {
+    match (args.get(2), args.get(3)) {
+        (Some(a), Some(b)) => f(a, b),
+        _ => {
+            eprintln!("missing arguments");
+            Ok(())
+        }
+    }
+}
+
+fn print_usage(prog: &str) {
     println!("\nUsage:");
-    println!(
-        "  {} list                           - List all available printers",
-        env::args().next().unwrap()
-    );
-    println!(
-        "  {} info <printer_name>            - Show detailed printer information",
-        env::args().next().unwrap()
-    );
-    println!(
-        "  {} print <printer_name> <file>    - Print a file to the specified printer",
-        env::args().next().unwrap()
-    );
-    println!(
-        "  {} options <printer_name>         - Show printer options",
-        env::args().next().unwrap()
-    );
-    println!(
-        "  {} media <printer_name>           - Show printer media information",
-        env::args().next().unwrap()
-    );
-    println!(
-        "  {} save-config <printer> <file>   - Save printer configuration",
-        env::args().next().unwrap()
-    );
-    println!(
-        "  {} load-config <file>             - Load printer configuration",
-        env::args().next().unwrap()
-    );
+    println!("  {prog} list");
+    println!("  {prog} info <printer_name>");
+    println!("  {prog} print <printer_name> <file_path>");
+    println!("  {prog} options <printer_name>");
+    println!("  {prog} media <printer_name>");
+    println!("  {prog} save-config <printer_name> <config_file>");
+    println!("  {prog} load-config <config_file>");
 }
 
-fn list_printers() -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n📋 Discovering printers...");
-
+fn connect() -> Result<Frontend, Box<dyn std::error::Error>> {
     let frontend = Frontend::new()?;
     frontend.connect_to_dbus()?;
+    Ok(frontend)
+}
 
+fn list_printers() -> ExResult {
+    let frontend = connect()?;
     let printers = frontend.get_printers()?;
-
     if printers.is_empty() {
-        println!("No printers found.");
-        println!("Make sure:");
-        println!("  - CUPS or other print services are running");
-        println!("  - Printers are configured and accessible");
-        println!("  - D-Bus session is active");
+        println!("no printers discovered");
         return Ok(());
     }
-
-    println!("Found {} printer(s):", printers.len());
-    println!(
-        "{:<20} {:<15} {:<20} {:<10}",
-        "Name", "Backend", "State", "Accepting Jobs"
-    );
+    println!("{:<24} {:<14} {:<18} {:<10}", "Name", "Backend", "State", "Accepts");
     println!("{}", "-".repeat(70));
-
-    for printer in printers {
-        let name = printer.name().unwrap_or_else(|_| "Unknown".to_string());
-        let backend = printer
-            .backend_name()
-            .unwrap_or_else(|_| "Unknown".to_string());
-        let state = printer
-            .get_updated_state()
-            .unwrap_or_else(|_| "Unknown".to_string());
-        let accepting = printer.is_accepting_jobs().unwrap_or(false);
-
-        println!(
-            "{:<20} {:<15} {:<20} {:<10}",
-            name,
-            backend,
-            state,
-            if accepting { "Yes" } else { "No" }
-        );
+    for p in printers {
+        let name = p.name().unwrap_or_else(|_| "?".into());
+        let backend = p.backend_name().unwrap_or_else(|_| "?".into());
+        let state = p.get_updated_state().unwrap_or_else(|_| "?".into());
+        let accepting = if p.is_accepting_jobs().unwrap_or(false) {
+            "yes"
+        } else {
+            "no"
+        };
+        println!("{name:<24} {backend:<14} {state:<18} {accepting:<10}");
     }
-
     Ok(())
 }
 
-fn show_printer_info(printer_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n🔍 Getting printer information for: {}", printer_name);
-
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let printer = frontend.get_printer(printer_name)?;
-
-    println!("📄 Printer Details:");
-    println!(
-        "  Name: {}",
-        printer.name().unwrap_or_else(|_| "Unknown".to_string())
-    );
-    println!(
-        "  ID: {}",
-        printer.id().unwrap_or_else(|_| "Unknown".to_string())
-    );
-    println!(
-        "  Location: {}",
-        printer
-            .location()
-            .unwrap_or_else(|_| "Not specified".to_string())
-    );
-    println!(
-        "  Description: {}",
-        printer
-            .description()
-            .unwrap_or_else(|_| "Not specified".to_string())
-    );
-    println!(
-        "  Make & Model: {}",
-        printer
-            .make_and_model()
-            .unwrap_or_else(|_| "Unknown".to_string())
-    );
-    println!(
-        "  Backend: {}",
-        printer
-            .backend_name()
-            .unwrap_or_else(|_| "Unknown".to_string())
-    );
-    println!(
-        "  Current State: {}",
-        printer
-            .get_updated_state()
-            .unwrap_or_else(|_| "Unknown".to_string())
-    );
-    println!(
-        "  Accepting Jobs: {}",
-        printer.is_accepting_jobs().unwrap_or(false)
-    );
-    println!("  Accepts PDF: {}", printer.accepts_pdf().unwrap_or(false));
-
+fn show_printer_info(name: &str) -> ExResult {
+    let frontend = connect()?;
+    let p = frontend.get_printer(name)?;
+    println!("Name: {}", p.name().unwrap_or_default());
+    println!("ID: {}", p.id().unwrap_or_default());
+    println!("Location: {}", p.location().unwrap_or_default());
+    println!("Description: {}", p.description().unwrap_or_default());
+    println!("Make & Model: {}", p.make_and_model().unwrap_or_default());
+    println!("Backend: {}", p.backend_name().unwrap_or_default());
+    println!("State: {}", p.get_updated_state().unwrap_or_default());
+    println!("Accepting jobs: {}", p.is_accepting_jobs().unwrap_or(false));
     Ok(())
 }
 
-fn print_file(printer_name: &str, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "\n🖨️  Printing file: {} to printer: {}",
-        file_path, printer_name
-    );
-
-    // Check if file exists
-    if !fs::metadata(file_path).is_ok() {
-        eprintln!("✗ File not found: {}", file_path);
+fn print_file(name: &str, file_path: &str) -> ExResult {
+    if fs::metadata(file_path).is_err() {
+        eprintln!("file not found: {file_path}");
         return Ok(());
     }
-
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let printer = frontend.get_printer(printer_name)?;
-
-    // Check if printer is accepting jobs
+    let frontend = connect()?;
+    let printer = frontend.get_printer(name)?;
     if !printer.is_accepting_jobs().unwrap_or(false) {
-        eprintln!("✗ Printer is not accepting jobs");
+        eprintln!("printer is not accepting jobs");
         return Ok(());
     }
-
-    // Print the file
-    match printer.print_single_file(file_path) {
-        Ok(job_id) => {
-            println!("✓ Print job submitted successfully!");
-            println!("  Job ID: {}", job_id);
-        }
-        Err(e) => {
-            eprintln!("✗ Print job failed: {}", e);
-            eprintln!("  Make sure the printer is ready and the file format is supported");
-        }
+    match printer.print_file(file_path) {
+        Ok(job_id) => println!("submitted: {job_id}"),
+        Err(e) => eprintln!("submit failed: {e}"),
     }
-
     Ok(())
 }
 
-fn show_printer_options(printer_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n⚙️  Getting options for printer: {}", printer_name);
-
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let printer = frontend.get_printer(printer_name)?;
-
-    // Common printer options to check
-    let common_options = [
+fn show_printer_options(name: &str) -> ExResult {
+    let frontend = connect()?;
+    let printer = frontend.get_printer(name)?;
+    let common = [
         "copies",
         "page-ranges",
         "orientation-requested",
@@ -268,102 +154,65 @@ fn show_printer_options(printer_name: &str) -> Result<(), Box<dyn std::error::Er
         "media",
         "printer-resolution",
     ];
-
-    println!("📋 Printer Options:");
-    for option in &common_options {
-        match printer.get_option(option) {
-            Ok(value) => println!("  {}: {}", option, value),
-            Err(_) => {
-                // Try to get default value
-                match printer.get_default(option) {
-                    Ok(default) => println!("  {}: {} (default)", option, default),
-                    Err(_) => println!("  {}: Not available", option),
-                }
-            }
+    for opt in common {
+        match printer.get_option(opt)? {
+            Some(v) => println!("  {opt}: {v}"),
+            None => println!("  {opt}: (unset)"),
         }
     }
-
     Ok(())
 }
 
-fn show_printer_media(printer_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "\n📄 Getting media information for printer: {}",
-        printer_name
-    );
-
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let printer = frontend.get_printer(printer_name)?;
-
-    println!("📋 Media Information:");
-
-    // Try to detect current media from printer options; fall back to a common name if unavailable
-    let media_name = printer
+fn show_printer_media(name: &str) -> ExResult {
+    let frontend = connect()?;
+    let printer = frontend.get_printer(name)?;
+    let media = printer
         .get_current("media")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "iso_a4_210x297mm".to_string());
-    println!("  Using media: {}", media_name);
-
-    match printer.get_media(&media_name) {
-        Ok(media) => println!("  Media: {}", media),
-        Err(_) => println!("  Media: Not available"),
+        .unwrap_or_else(|| "iso_a4_210x297mm".into());
+    println!("media: {media}");
+    match printer.get_media(&media) {
+        Ok(Some(name)) => println!("media name: {name}"),
+        Ok(None) => println!("media name: (unset)"),
+        Err(e) => println!("media name: error: {e}"),
     }
-    match printer.get_media_size(&media_name) {
-        Ok(size) => println!("  Size: {:?}", size),
-        Err(_) => println!("  Size: Not available"),
+    match printer.get_media_size(&media) {
+        Ok(size) => println!("size: {}x{} (1/100 mm)", size.width, size.length),
+        Err(e) => println!("size: error: {e}"),
     }
-    match printer.get_media_margins(&media_name) {
-        Ok(margins) => println!("  Margins: {}", margins),
-        Err(_) => println!("  Margins: Not available"),
-    }
-
-    Ok(())
-}
-
-fn save_printer_config(
-    printer_name: &str,
-    config_file: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "\n💾 Saving printer configuration: {} -> {}",
-        printer_name, config_file
-    );
-
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let printer = frontend.get_printer(printer_name)?;
-
-    match printer.save_to_file(config_file, &frontend) {
-        Ok(_) => println!("✓ Printer configuration saved successfully"),
-        Err(e) => eprintln!("✗ Failed to save configuration: {}", e),
-    }
-
-    Ok(())
-}
-
-fn load_printer_config(config_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n📂 Loading printer configuration from: {}", config_file);
-
-    match Printer::load_from_file(config_file) {
-        Ok(printer) => {
-            println!("✓ Printer configuration loaded successfully");
-            println!(
-                "  Name: {}",
-                printer.name().unwrap_or_else(|_| "Unknown".to_string())
-            );
-            println!(
-                "  Backend: {}",
-                printer
-                    .backend_name()
-                    .unwrap_or_else(|_| "Unknown".to_string())
-            );
+    match printer.get_media_margins(&media) {
+        Ok(margins) => {
+            for (i, m) in margins.0.iter().enumerate() {
+                println!(
+                    "margin[{i}]: top={}, bottom={}, left={}, right={}",
+                    m.top, m.bottom, m.left, m.right
+                );
+            }
         }
-        Err(e) => eprintln!("✗ Failed to load configuration: {}", e),
+        Err(e) => println!("margins: error: {e}"),
     }
+    Ok(())
+}
 
+fn save_printer_config(name: &str, config_file: &str) -> ExResult {
+    let frontend = connect()?;
+    let printer = frontend.get_printer(name)?;
+    match printer.pickle_to_file(config_file, &frontend) {
+        Ok(()) => println!("saved {name} -> {config_file}"),
+        Err(e) => eprintln!("save failed: {e}"),
+    }
+    Ok(())
+}
+
+fn load_printer_config(config_file: &str) -> ExResult {
+    match Printer::load_from_file(config_file) {
+        Ok(p) => {
+            println!("loaded printer from {config_file}");
+            println!("  name: {}", p.name().unwrap_or_default());
+            println!("  backend: {}", p.backend_name().unwrap_or_default());
+        }
+        Err(e) => eprintln!("load failed: {e}"),
+    }
     Ok(())
 }

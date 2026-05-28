@@ -7,23 +7,26 @@ license = "MIT"
 keywords = ["printing", "cups", "openprinting", "ffi", "cpdb"]
 categories = ["api-bindings", "os::unix-apis"]
 readme = "README.md"
+repository = "https://github.com/OpenPrinting/cpdb-rs"
 rust-version = "1.85"
 build = "build.rs"
+links = "cpdb"
+
+[package.metadata.docs.rs]
+all-features = false
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 libc = "0.2"
 thiserror = "2.0"
 log = "0.4"
-crossbeam-channel = "0.5"
 glib-sys = "0.22"
 
 [build-dependencies]
 bindgen = "0.72"
 pkg-config = "0.3"
-
-[features]
-frontend = []
-backend = []
 
 [dev-dependencies]
 tempfile = "3.10"

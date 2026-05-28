@@ -1,421 +1,431 @@
+//! Safe wrapper around `cpdb_printer_obj_t`.
+//!
+//! # Ownership and lifetimes
+//!
+//! Printers come in two flavours:
+//!
+//! - **Borrowed** — returned by [`crate::Frontend::find_printer`],
+//!   [`crate::Frontend::get_printer`], [`crate::Frontend::get_printers`],
+//!   and the default-printer accessors. The underlying C object is owned by
+//!   the frontend's hash table; the Rust binding carries the frontend's
+//!   lifetime so the borrow checker enforces that the printer cannot outlive
+//!   its frontend.
+//! - **Owned** — returned by [`Printer::load_from_file`]. The C object was
+//!   allocated independently; Rust frees it via `cpdbDeletePrinterObj` on
+//!   drop. Owned printers have a `'static` lifetime.
+//!
+//! `Printer` deliberately does not implement [`Send`] or [`Sync`]. Most
+//! cpdb-libs methods on a printer object mutate shared state (the printer's
+//! settings table is shared with the frontend), and the C library does not
+//! lock internally. If you need to dispatch printer operations from
+//! multiple threads, wrap a single printer in a [`std::sync::Mutex`].
+
 use crate::error::{CpdbError, Result};
+use crate::ffi;
+use crate::frontend::Frontend;
 use crate::options::OptionsCollection;
 use crate::util;
-use crate::{ffi, Frontend};
 use libc::c_char;
 use std::ffi::CString;
-use std::ptr;
+use std::marker::PhantomData;
+use std::ptr::NonNull;
 
-/// A handle to a CPDB printer object.
-///
-/// # Ownership model
-///
-/// Printers come in two flavors:
-///
-/// - **Borrowed** (created by [`Frontend::find_printer`], [`Frontend::get_printers`], etc.):
-///   The underlying C object is owned by the frontend's internal hash table.
-///   Rust will **not** free it on drop. These must not outlive the [`Frontend`].
-///
-/// - **Owned** (created by [`Printer::load_from_file`]):
-///   The underlying C object was allocated independently of any frontend.
-///   Rust **will** free it via `cpdbDeletePrinterObj` on drop.
-///
-/// `Printer` intentionally does **not** implement `Clone`. Sharing a borrowed
-/// printer across scopes should use `&Printer`. If shared ownership across
-/// threads is needed for an owned printer, wrap it in `Arc<Mutex<Printer>>`.
-#[derive(Debug)]
-pub struct Printer {
-    raw: *mut ffi::cpdb_printer_obj_t,
-    owned: bool,
+/// Page margins in hundredths of a millimetre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Margin {
+    /// Top margin.
+    pub top: i32,
+    /// Bottom margin.
+    pub bottom: i32,
+    /// Left margin.
+    pub left: i32,
+    /// Right margin.
+    pub right: i32,
 }
 
-unsafe impl Send for Printer {}
-unsafe impl Sync for Printer {}
+/// One or more [`Margin`] entries returned by the backend for a media type.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Margins(pub Vec<Margin>);
 
-impl Printer {
+/// Media dimensions in hundredths of a millimetre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaSize {
+    /// Width.
+    pub width: i32,
+    /// Length.
+    pub length: i32,
+}
+
+/// A safe handle to a cpdb printer object.
+///
+/// See [the module docs](self) for the ownership and lifetime model.
+#[derive(Debug)]
+pub struct Printer<'frontend> {
+    raw: NonNull<ffi::cpdb_printer_obj_t>,
+    owned: bool,
+    // Borrowed printers borrow from a `Frontend`; using a non-`Send`/`Sync`
+    // marker also keeps owned printers off other threads, which matches
+    // cpdb-libs' lack of internal locking.
+    _marker: PhantomData<&'frontend Frontend>,
+}
+
+impl<'frontend> Printer<'frontend> {
     // ─── Constructors ────────────────────────────────────────────────────────
 
-    /// Wraps a raw pointer as a *borrowed* printer (will NOT be freed on drop).
+    /// Wraps a printer object that is owned by a frontend's hash table.
+    ///
+    /// The returned printer borrows from the frontend and will NOT be freed
+    /// by Rust on drop.
     pub(crate) fn from_raw_borrowed(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
-        if raw.is_null() {
-            Err(CpdbError::NullPointer)
-        } else {
-            Ok(Self { raw, owned: false })
-        }
+        let raw = NonNull::new(raw).ok_or(CpdbError::NullPointer)?;
+        Ok(Self {
+            raw,
+            owned: false,
+            _marker: PhantomData,
+        })
     }
 
-    /// Wraps a raw pointer as an *owned* printer (will be freed on drop).
+    /// Wraps a printer object that the binding will free on drop.
+    ///
+    /// Used for printers loaded from a pickle file.
     pub(crate) fn from_raw_owned(raw: *mut ffi::cpdb_printer_obj_t) -> Result<Self> {
-        if raw.is_null() {
-            Err(CpdbError::NullPointer)
-        } else {
-            Ok(Self { raw, owned: true })
-        }
+        let raw = NonNull::new(raw).ok_or(CpdbError::NullPointer)?;
+        Ok(Self {
+            raw,
+            owned: true,
+            _marker: PhantomData,
+        })
     }
 
-    /// Exposes the raw pointer for use within this crate.
+    /// Returns the raw pointer for use within this crate.
+    #[doc(hidden)]
     pub fn as_raw(&self) -> *mut ffi::cpdb_printer_obj_t {
-        self.raw
+        self.raw.as_ptr()
+    }
+
+    /// `true` when this binding will free the underlying C object on drop.
+    #[doc(hidden)]
+    pub(crate) fn is_owned(&self) -> bool {
+        self.owned
     }
 
     // ─── Field accessors ─────────────────────────────────────────────────────
 
-    fn get_string_field<F>(
-        &self,
-        field_accessor: F,
-        field_name_for_error: &'static str,
-    ) -> Result<String>
+    /// The backend-assigned printer ID (stable across sessions).
+    pub fn id(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).id })
+    }
+
+    /// The human-readable printer name.
+    pub fn name(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).name })
+    }
+
+    /// The physical location string supplied by the backend.
+    pub fn location(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).location })
+    }
+
+    /// A free-form description (`info` in the C struct).
+    pub fn description(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).info })
+    }
+
+    /// The printer's make and model.
+    pub fn make_and_model(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).make_and_model })
+    }
+
+    /// The backend name this printer belongs to (e.g. `"CUPS"`).
+    pub fn backend_name(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).backend_name })
+    }
+
+    /// The cached state string (`idle`, `processing`, ...).
+    ///
+    /// For an authoritative answer use [`Printer::get_updated_state`].
+    pub fn cached_state(&self) -> Result<String> {
+        self.read_str_field(|p| unsafe { (*p).state })
+    }
+
+    /// Reads an optional NUL-terminated string field from the printer struct.
+    fn read_str_field<F>(&self, accessor: F) -> Result<String>
     where
         F: FnOnce(*mut ffi::cpdb_printer_obj_t) -> *const c_char,
     {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(format!(
-                "Printer object pointer is null when accessing {}",
-                field_name_for_error
-            )));
-        }
-        let c_ptr = field_accessor(self.raw);
-        match unsafe { util::cstr_to_string(c_ptr) } {
+        let ptr = accessor(self.raw.as_ptr());
+        // SAFETY: `ptr` is borrowed from the printer object; the read above
+        // is just a field deref. `cstr_to_string` is null-tolerant.
+        match unsafe { util::cstr_to_string(ptr) } {
             Ok(s) => Ok(s),
             Err(CpdbError::NullPointer) => Ok(String::new()),
             Err(e) => Err(e),
         }
     }
 
-    pub fn id(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).id }, "id")
-    }
-
-    pub fn name(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).name }, "name")
-    }
-
-    pub fn location(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).location }, "location")
-    }
-
-    pub fn description(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).info }, "info")
-    }
-
-    pub fn make_and_model(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).make_and_model }, "make_and_model")
-    }
-
-    pub fn backend_name(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).backend_name }, "backend_name")
-    }
-
-    pub fn current_state_field(&self) -> Result<String> {
-        self.get_string_field(|p| unsafe { (*p).state }, "state_field")
-    }
-
     // ─── State ───────────────────────────────────────────────────────────────
 
-    /// Returns the current printer state string (e.g. `"idle"`, `"processing"`).
+    /// Queries the current state from the backend.
     ///
-    /// The returned pointer is borrowed from an internal field — do NOT free it.
+    /// The returned string is owned by Rust; the cpdb-libs allocation is
+    /// freed inside this call.
     pub fn get_updated_state(&self) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_updated_state".to_string(),
-            ));
-        }
+        // SAFETY: cpdbGetState returns a freshly `g_strdup`'d string we own.
         unsafe {
-            let c_state_ptr = ffi::cpdbGetState(self.raw);
-            util::cstr_to_string(c_state_ptr)
+            let raw = ffi::cpdbGetState(self.raw.as_ptr());
+            util::cstr_to_string_and_g_free(raw)
         }
     }
 
+    /// `true` when the printer is accepting jobs.
     pub fn is_accepting_jobs(&self) -> Result<bool> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for is_accepting_jobs".to_string(),
-            ));
-        }
-        unsafe { Ok(ffi::cpdbIsAcceptingJobs(self.raw) != 0) }
-    }
-
-    pub fn accepts_pdf(&self) -> Result<bool> {
-        let model = self.make_and_model().unwrap_or_default();
-        Ok(model.to_lowercase().contains("pdf"))
+        // SAFETY: pointer is non-null.
+        Ok(unsafe { ffi::cpdbIsAcceptingJobs(self.raw.as_ptr()) } != 0)
     }
 
     // ─── Defaults ────────────────────────────────────────────────────────────
 
-    /// Sets this printer as the user default.
-    pub fn set_user_default(&self) -> bool {
-        unsafe { ffi::cpdbSetUserDefaultPrinter(self.raw) != 0 }
+    /// Marks this printer as the user's default. Returns `true` on success.
+    pub fn set_user_default(&self) -> Result<bool> {
+        // SAFETY: pointer is non-null.
+        Ok(unsafe { ffi::cpdbSetUserDefaultPrinter(self.raw.as_ptr()) } != 0)
     }
 
-    /// Sets this printer as the system default.
-    pub fn set_system_default(&self) -> bool {
-        unsafe { ffi::cpdbSetSystemDefaultPrinter(self.raw) != 0 }
+    /// Marks this printer as the system-wide default. Returns `true` on success.
+    pub fn set_system_default(&self) -> Result<bool> {
+        // SAFETY: pointer is non-null.
+        Ok(unsafe { ffi::cpdbSetSystemDefaultPrinter(self.raw.as_ptr()) } != 0)
     }
 
-    // ─── Job submission ───────────────────────────────────────────────────────
+    // ─── Job submission ──────────────────────────────────────────────────────
 
-    /// Prints a file with no extra options. Returns the job ID string.
-    pub fn print_single_file(&self, file_path: &str) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for print_single_file".to_string(),
-            ));
-        }
-        let c_file_path = CString::new(file_path)?;
+    /// Submits a file as a print job with no extra options.
+    ///
+    /// Returns the backend-assigned job ID string.
+    pub fn print_file(&self, file_path: &str) -> Result<String> {
+        let c_path = CString::new(file_path)?;
+        // SAFETY: cpdbPrintFile returns a `g_strdup`'d job ID we own.
         unsafe {
-            let job_id_ptr = ffi::cpdbPrintFile(self.raw, c_file_path.as_ptr());
-            util::cstr_to_string_and_g_free(job_id_ptr)
+            let id = ffi::cpdbPrintFile(self.raw.as_ptr(), c_path.as_ptr());
+            util::cstr_to_string_and_g_free(id)
+                .map_err(|_| CpdbError::JobFailed("cpdbPrintFile returned null".into()))
         }
     }
 
-    /// Submits a print job with a title and key-value options.
+    /// Submits a job with a per-call set of options and an explicit title.
+    ///
+    /// Options are applied to the printer's settings table via
+    /// `cpdbAddSettingToPrinter` before submission, so they take effect for
+    /// this job and persist for subsequent jobs on the same printer until
+    /// cleared via [`Printer::clear_setting`].
+    ///
+    /// Returns the backend-assigned job ID string.
     pub fn submit_job(
         &self,
         file_path: &str,
-        _options: &[(&str, &str)],
-        job_name: &str,
-    ) -> Result<()> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for submit_job".to_string(),
-            ));
+        options: &[(&str, &str)],
+        title: &str,
+    ) -> Result<String> {
+        let c_path = CString::new(file_path)?;
+        let c_title = CString::new(title)?;
+        for (key, value) in options {
+            let k = CString::new(*key)?;
+            let v = CString::new(*value)?;
+            // SAFETY: pointers are non-null; CStrings live until end of loop body.
+            unsafe { ffi::cpdbAddSettingToPrinter(self.raw.as_ptr(), k.as_ptr(), v.as_ptr()) };
         }
-        let file_cstr = CString::new(file_path)?;
-        let job_cstr = CString::new(job_name)?;
+        // SAFETY: cpdbPrintFileWithJobTitle returns a `g_strdup`'d job ID we own.
         unsafe {
-            let job_id_ptr =
-                ffi::cpdbPrintFileWithJobTitle(self.raw, file_cstr.as_ptr(), job_cstr.as_ptr());
-            if job_id_ptr.is_null() {
-                Err(CpdbError::BackendError(
-                    "Job submission failed - no job ID returned".to_string(),
-                ))
-            } else {
-                libc::free(job_id_ptr as *mut libc::c_void);
-                Ok(())
-            }
+            let id =
+                ffi::cpdbPrintFileWithJobTitle(self.raw.as_ptr(), c_path.as_ptr(), c_title.as_ptr());
+            util::cstr_to_string_and_g_free(id).map_err(|_| {
+                CpdbError::JobFailed("cpdbPrintFileWithJobTitle returned null".into())
+            })
         }
     }
 
     // ─── Options ─────────────────────────────────────────────────────────────
 
-    /// Gets a specific option's default value.
-    pub fn get_option(&self, option_name: &str) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_option".to_string(),
-            ));
-        }
-        let c_option_name = CString::new(option_name)?;
+    /// Returns the default value for a named option, if the option exists.
+    pub fn get_option(&self, option_name: &str) -> Result<Option<String>> {
+        let c_name = CString::new(option_name)?;
+        // SAFETY: `cpdbGetOption` returns a borrowed pointer into the printer's
+        // option table; we must NOT free it. Reading `default_value` is a
+        // simple field deref.
         unsafe {
-            let option_ptr = ffi::cpdbGetOption(self.raw, c_option_name.as_ptr());
-            if option_ptr.is_null() {
-                Err(CpdbError::BackendError(format!(
-                    "Option '{}' not found",
-                    option_name
-                )))
-            } else {
-                let default_value = (*option_ptr).default_value;
-                if default_value.is_null() {
-                    Ok("NA".to_string())
-                } else {
-                    util::cstr_to_string(default_value)
-                }
+            let opt = ffi::cpdbGetOption(self.raw.as_ptr(), c_name.as_ptr());
+            if opt.is_null() {
+                return Ok(None);
             }
-        }
-    }
-
-    /// Gets the default value for a named option.
-    pub fn get_default(&self, option_name: &str) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_default".to_string(),
-            ));
-        }
-        let c_option_name = CString::new(option_name)?;
-        unsafe {
-            let value_ptr = ffi::cpdbGetDefault(self.raw, c_option_name.as_ptr());
-            util::cstr_to_string_and_g_free(value_ptr)
-        }
-    }
-
-    /// Gets the current (active) value for a named option.
-    pub fn get_current(&self, option_name: &str) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_current".to_string(),
-            ));
-        }
-        let c_option_name = CString::new(option_name)?;
-        unsafe {
-            let value_ptr = ffi::cpdbGetCurrent(self.raw, c_option_name.as_ptr());
-            util::cstr_to_string_and_g_free(value_ptr)
-        }
-    }
-
-    /// Fetches full option details from the backend. Call this before
-    /// `get_options_collection` to ensure the options table is populated.
-    pub fn acquire_details(&self) -> Result<()> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for acquire_details".to_string(),
-            ));
-        }
-        // cpdbAcquireDetails is async; the caller can pass a callback via
-        // the raw FFI if they need a completion notification.
-        unsafe {
-            ffi::cpdbAcquireDetails(self.raw, None, std::ptr::null_mut());
-        }
-        Ok(())
-    }
-
-    /// Returns an owned snapshot of all printer options.
-    ///
-    /// Call [`acquire_details`] first to ensure the options table is populated
-    /// from the backend. After this call returns the collection holds no raw
-    /// pointers and can be freely stored or moved.
-    ///
-    /// [`acquire_details`]: Self::acquire_details
-    pub fn get_options_collection(&self) -> Result<OptionsCollection> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_options_collection".to_string(),
-            ));
-        }
-        unsafe {
-            let opts_ptr = ffi::cpdbGetAllOptions(self.raw);
-            if opts_ptr.is_null() {
-                return Err(CpdbError::BackendError(
-                    "cpdbGetAllOptions returned null — call acquire_details() first".to_string(),
-                ));
-            }
-            OptionsCollection::from_raw(opts_ptr)
-        }
-    }
-
-    // ─── Settings ────────────────────────────────────────────────────────────
-
-    /// Gets the current setting value for an option.
-    ///
-    /// The returned pointer is borrowed from the internal hash table — do NOT free it.
-    pub fn get_setting(&self, option_name: &str) -> Result<Option<String>> {
-        let c_opt = CString::new(option_name)?;
-        unsafe {
-            let val = ffi::cpdbGetSetting(self.raw, c_opt.as_ptr());
-            if val.is_null() {
+            let dv = (*opt).default_value;
+            if dv.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(util::cstr_to_string(val)?))
+                util::cstr_to_string(dv).map(Some)
             }
         }
     }
 
-    /// Adds or overwrites a per-printer setting (e.g. `"copies"` → `"2"`).
+    /// Returns the default value for a named option, freeing the GLib string.
+    pub fn get_default(&self, option_name: &str) -> Result<String> {
+        let c_name = CString::new(option_name)?;
+        // SAFETY: `cpdbGetDefault` returns a `g_strdup`'d string we own.
+        unsafe {
+            let v = ffi::cpdbGetDefault(self.raw.as_ptr(), c_name.as_ptr());
+            util::cstr_to_string_and_g_free(v)
+        }
+    }
+
+    /// Returns the *current* (setting-or-default) value for a named option.
+    pub fn get_current(&self, option_name: &str) -> Result<String> {
+        let c_name = CString::new(option_name)?;
+        // SAFETY: `cpdbGetCurrent` returns a `g_strdup`'d string we own.
+        unsafe {
+            let v = ffi::cpdbGetCurrent(self.raw.as_ptr(), c_name.as_ptr());
+            util::cstr_to_string_and_g_free(v)
+        }
+    }
+
+    /// Asynchronously requests the backend to populate the printer's full
+    /// option table. Returns immediately; pass a callback through the raw
+    /// FFI if you need a completion notification.
+    pub fn acquire_details(&self) {
+        // SAFETY: passing a null callback is documented as valid.
+        unsafe {
+            ffi::cpdbAcquireDetails(self.raw.as_ptr(), None, std::ptr::null_mut());
+        }
+    }
+
+    /// Returns an owned snapshot of every option on this printer.
+    ///
+    /// Call [`Printer::acquire_details`] before this so the option table is
+    /// populated by the backend.
+    pub fn get_options_collection(&self) -> Result<OptionsCollection> {
+        // SAFETY: `cpdbGetAllOptions` returns a borrowed pointer to the
+        // printer's `options` field; the collection copies all data before
+        // returning, so we never retain the pointer.
+        unsafe {
+            let opts = ffi::cpdbGetAllOptions(self.raw.as_ptr());
+            let opts = NonNull::new(opts).ok_or_else(|| {
+                CpdbError::BackendError(
+                    "cpdbGetAllOptions returned null — call acquire_details() first".into(),
+                )
+            })?;
+            Ok(OptionsCollection::from_raw(opts))
+        }
+    }
+
+    // ─── Per-printer settings ────────────────────────────────────────────────
+
+    /// Reads a per-printer setting, or returns `None` when unset.
+    pub fn get_setting(&self, name: &str) -> Result<Option<String>> {
+        let c_name = CString::new(name)?;
+        // SAFETY: `cpdbGetSetting` returns a borrowed pointer into the
+        // printer's settings table; we must NOT free it.
+        unsafe {
+            let v = ffi::cpdbGetSetting(self.raw.as_ptr(), c_name.as_ptr());
+            if v.is_null() {
+                Ok(None)
+            } else {
+                util::cstr_to_string(v).map(Some)
+            }
+        }
+    }
+
+    /// Inserts or overwrites a per-printer setting.
     pub fn add_setting(&self, name: &str, value: &str) -> Result<()> {
         let c_name = CString::new(name)?;
         let c_val = CString::new(value)?;
-        unsafe {
-            ffi::cpdbAddSettingToPrinter(self.raw, c_name.as_ptr(), c_val.as_ptr());
-        }
+        // SAFETY: pointers are non-null; the CStrings outlive the call.
+        unsafe { ffi::cpdbAddSettingToPrinter(self.raw.as_ptr(), c_name.as_ptr(), c_val.as_ptr()) };
         Ok(())
     }
 
-    /// Removes a per-printer setting.
-    pub fn clear_setting(&self, name: &str) -> Result<()> {
+    /// Removes a per-printer setting. Returns `Ok(true)` when it existed.
+    pub fn clear_setting(&self, name: &str) -> Result<bool> {
         let c_name = CString::new(name)?;
-        unsafe {
-            ffi::cpdbClearSettingFromPrinter(self.raw, c_name.as_ptr());
-        }
-        Ok(())
+        // SAFETY: pointers are non-null; the CString outlives the call.
+        let existed =
+            unsafe { ffi::cpdbClearSettingFromPrinter(self.raw.as_ptr(), c_name.as_ptr()) };
+        Ok(existed != 0)
     }
 
     // ─── Media ───────────────────────────────────────────────────────────────
 
-    /// Gets media information for a named media type.
-    pub fn get_media(&self, media_name: &str) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_media".to_string(),
-            ));
-        }
-        let c_media_name = CString::new(media_name)?;
+    /// Returns the descriptive name of a media type, if known.
+    pub fn get_media(&self, media_name: &str) -> Result<Option<String>> {
+        let c_name = CString::new(media_name)?;
+        // SAFETY: `cpdbGetMedia` returns a borrowed pointer into the
+        // printer's media table.
         unsafe {
-            let media_ptr = ffi::cpdbGetMedia(self.raw, c_media_name.as_ptr());
-            if media_ptr.is_null() {
-                Err(CpdbError::BackendError(format!(
-                    "Media '{}' not found",
-                    media_name
-                )))
+            let m = ffi::cpdbGetMedia(self.raw.as_ptr(), c_name.as_ptr());
+            if m.is_null() {
+                return Ok(None);
+            }
+            let name_ptr = (*m).name;
+            if name_ptr.is_null() {
+                Ok(None)
             } else {
-                let name = (*media_ptr).name;
-                if name.is_null() {
-                    Ok("Unknown".to_string())
-                } else {
-                    util::cstr_to_string(name)
-                }
+                util::cstr_to_string(name_ptr).map(Some)
             }
         }
     }
 
-    /// Returns `(width_hundredths_mm, length_hundredths_mm)`.
-    pub fn get_media_size(&self, media_name: &str) -> Result<(i32, i32)> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_media_size".to_string(),
-            ));
-        }
-        let c_media_name = CString::new(media_name)?;
-        unsafe {
-            let mut width: i32 = 0;
-            let mut length: i32 = 0;
-            let result =
-                ffi::cpdbGetMediaSize(self.raw, c_media_name.as_ptr(), &mut width, &mut length);
-            if result == 0 {
-                Ok((width, length))
-            } else {
-                Err(CpdbError::BackendError(format!(
-                    "Failed to get media size for '{}'",
-                    media_name
-                )))
-            }
+    /// Returns the media size for a named media type.
+    ///
+    /// Both dimensions are in hundredths of a millimetre.
+    pub fn get_media_size(&self, media_name: &str) -> Result<MediaSize> {
+        let c_name = CString::new(media_name)?;
+        let (mut width, mut length): (i32, i32) = (0, 0);
+        // SAFETY: passing valid pointers to two stack-allocated `i32`s.
+        let rc = unsafe {
+            ffi::cpdbGetMediaSize(
+                self.raw.as_ptr(),
+                c_name.as_ptr(),
+                &mut width,
+                &mut length,
+            )
+        };
+        if rc == 0 {
+            Ok(MediaSize { width, length })
+        } else {
+            Err(CpdbError::NotFound(format!("media size '{media_name}'")))
         }
     }
 
-    /// Returns margin info as a formatted string.
-    pub fn get_media_margins(&self, media_name: &str) -> Result<String> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for get_media_margins".to_string(),
-            ));
+    /// Returns every margin entry the backend reports for a named media type.
+    pub fn get_media_margins(&self, media_name: &str) -> Result<Margins> {
+        let c_name = CString::new(media_name)?;
+        let mut raw_margins: *mut ffi::cpdb_margin_t = std::ptr::null_mut();
+        // SAFETY: passing valid pointers; cpdb-libs writes to `raw_margins`.
+        let count =
+            unsafe { ffi::cpdbGetMediaMargins(self.raw.as_ptr(), c_name.as_ptr(), &mut raw_margins) };
+        if count <= 0 || raw_margins.is_null() {
+            return Err(CpdbError::NotFound(format!("media margins '{media_name}'")));
         }
-        let c_media_name = CString::new(media_name)?;
-        unsafe {
-            let mut margins_ptr: *mut ffi::cpdb_margin_t = ptr::null_mut();
-            let result =
-                ffi::cpdbGetMediaMargins(self.raw, c_media_name.as_ptr(), &mut margins_ptr);
-            if result == 0 && !margins_ptr.is_null() {
-                let m = &*margins_ptr;
-                Ok(format!(
-                    "top: {}, bottom: {}, left: {}, right: {}",
-                    m.top, m.bottom, m.left, m.right
-                ))
-            } else {
-                Err(CpdbError::BackendError(format!(
-                    "Failed to get media margins for '{}'",
-                    media_name
-                )))
-            }
+        let mut out = Vec::with_capacity(count as usize);
+        // SAFETY: cpdb-libs guarantees `count` valid entries at `raw_margins`.
+        for i in 0..(count as isize) {
+            let m = unsafe { &*raw_margins.offset(i) };
+            out.push(Margin {
+                top: m.top,
+                bottom: m.bottom,
+                left: m.left,
+                right: m.right,
+            });
         }
+        Ok(Margins(out))
     }
 
     // ─── Translations ────────────────────────────────────────────────────────
 
-    /// Fetches translations from the backend asynchronously.
+    /// Asynchronously fetches translations for the given locale.
     pub fn acquire_translations(&self, locale: &str) -> Result<()> {
         let c_locale = CString::new(locale)?;
+        // SAFETY: passing a null callback is documented as valid.
         unsafe {
             ffi::cpdbAcquireTranslations(
-                self.raw,
+                self.raw.as_ptr(),
                 c_locale.as_ptr(),
                 None,
                 std::ptr::null_mut(),
@@ -424,19 +434,18 @@ impl Printer {
         Ok(())
     }
 
-    /// Returns the human-readable label for an option name.
+    /// Returns the human-readable label for an option in the given locale.
     pub fn get_option_translation(&self, option: &str, locale: &str) -> Result<Option<String>> {
         let c_opt = CString::new(option)?;
         let c_locale = CString::new(locale)?;
+        // SAFETY: cpdb returns a `g_strdup`'d translation string we own.
         unsafe {
-            let t = ffi::cpdbGetOptionTranslation(self.raw, c_opt.as_ptr(), c_locale.as_ptr());
-            if t.is_null() {
-                Ok(None)
-            } else {
-                let s = util::cstr_to_string(t)?;
-                glib_sys::g_free(t as glib_sys::gpointer);
-                Ok(Some(s))
-            }
+            let t = ffi::cpdbGetOptionTranslation(
+                self.raw.as_ptr(),
+                c_opt.as_ptr(),
+                c_locale.as_ptr(),
+            );
+            translation_to_option(t)
         }
     }
 
@@ -450,20 +459,15 @@ impl Printer {
         let c_opt = CString::new(option)?;
         let c_choice = CString::new(choice)?;
         let c_locale = CString::new(locale)?;
+        // SAFETY: cpdb returns a `g_strdup`'d translation string we own.
         unsafe {
             let t = ffi::cpdbGetChoiceTranslation(
-                self.raw,
+                self.raw.as_ptr(),
                 c_opt.as_ptr(),
                 c_choice.as_ptr(),
                 c_locale.as_ptr(),
             );
-            if t.is_null() {
-                Ok(None)
-            } else {
-                let s = util::cstr_to_string(t)?;
-                glib_sys::g_free(t as glib_sys::gpointer);
-                Ok(Some(s))
-            }
+            translation_to_option(t)
         }
     }
 
@@ -471,77 +475,74 @@ impl Printer {
     pub fn get_group_translation(&self, group: &str, locale: &str) -> Result<Option<String>> {
         let c_group = CString::new(group)?;
         let c_locale = CString::new(locale)?;
+        // SAFETY: cpdb returns a `g_strdup`'d translation string we own.
         unsafe {
-            let t = ffi::cpdbGetGroupTranslation(self.raw, c_group.as_ptr(), c_locale.as_ptr());
-            if t.is_null() {
-                Ok(None)
-            } else {
-                let s = util::cstr_to_string(t)?;
-                glib_sys::g_free(t as glib_sys::gpointer);
-                Ok(Some(s))
-            }
+            let t = ffi::cpdbGetGroupTranslation(
+                self.raw.as_ptr(),
+                c_group.as_ptr(),
+                c_locale.as_ptr(),
+            );
+            translation_to_option(t)
         }
     }
 
-    /// Fetches all translations for this printer's locale.
+    /// Synchronously populates every translation for the given locale.
     pub fn get_all_translations(&self, locale: &str) -> Result<()> {
         let c_locale = CString::new(locale)?;
-        unsafe {
-            ffi::cpdbGetAllTranslations(self.raw, c_locale.as_ptr());
-        }
+        // SAFETY: pointers are non-null.
+        unsafe { ffi::cpdbGetAllTranslations(self.raw.as_ptr(), c_locale.as_ptr()) };
         Ok(())
     }
 
     // ─── Persistence ─────────────────────────────────────────────────────────
 
-    /// Saves printer configuration to a file.
-    pub fn save_to_file(&self, filename: &str, frontend: &Frontend) -> Result<()> {
-        self.pickle_to_file(filename, frontend)
-    }
-
-    /// Serialises this printer to disk so it can be resurrected later.
+    /// Serialises this printer to a file (`cpdbPicklePrinterToFile`).
     pub fn pickle_to_file(&self, path: &str, frontend: &Frontend) -> Result<()> {
-        if self.raw.is_null() {
-            return Err(CpdbError::BackendError(
-                "Printer object pointer is null for pickle_to_file".to_string(),
-            ));
-        }
         let c_path = CString::new(path)?;
+        // SAFETY: both pointers are non-null and live for the duration of the call.
         unsafe {
-            ffi::cpdbPicklePrinterToFile(self.raw, c_path.as_ptr(), frontend.as_raw());
+            ffi::cpdbPicklePrinterToFile(self.raw.as_ptr(), c_path.as_ptr(), frontend.as_raw());
         }
         Ok(())
     }
 
-    /// Loads a printer that was previously serialised with `pickle_to_file`.
-    /// The returned printer is *owned*.
-    pub fn load_from_file(filename: &str) -> Result<Self> {
-        let c_filename = CString::new(filename)?;
-        unsafe {
-            let printer_ptr = ffi::cpdbResurrectPrinterFromFile(c_filename.as_ptr());
-            if printer_ptr.is_null() {
-                Err(CpdbError::BackendError(
-                    "Failed to load printer from file".into(),
-                ))
-            } else {
-                Self::from_raw_owned(printer_ptr)
-            }
+    /// Loads a printer that was previously serialised via [`pickle_to_file`].
+    ///
+    /// The returned printer is *owned* — it is freed when dropped.
+    ///
+    /// [`pickle_to_file`]: Self::pickle_to_file
+    pub fn load_from_file(path: &str) -> Result<Printer<'static>> {
+        let c_path = CString::new(path)?;
+        // SAFETY: `cpdbResurrectPrinterFromFile` returns an owned printer.
+        let raw = unsafe { ffi::cpdbResurrectPrinterFromFile(c_path.as_ptr()) };
+        if raw.is_null() {
+            return Err(CpdbError::NotFound(format!("pickled printer at {path}")));
         }
+        Printer::<'static>::from_raw_owned(raw)
     }
 }
 
-impl Drop for Printer {
+/// Converts a cpdb-libs-allocated translation string into `Option<String>`,
+/// freeing the underlying buffer.
+///
+/// # Safety
+/// `ptr` must be null or a GLib-allocated NUL-terminated string we own.
+unsafe fn translation_to_option(ptr: *mut c_char) -> Result<Option<String>> {
+    if ptr.is_null() {
+        Ok(None)
+    } else {
+        unsafe { util::cstr_to_string_and_g_free(ptr) }.map(Some)
+    }
+}
+
+impl Drop for Printer<'_> {
     fn drop(&mut self) {
-        if self.owned && !self.raw.is_null() {
-            unsafe {
-                ffi::cpdbDeletePrinterObj(self.raw);
-            }
-            self.raw = std::ptr::null_mut();
+        if self.owned {
+            // SAFETY: we own the pointer and have not aliased it.
+            unsafe { ffi::cpdbDeletePrinterObj(self.raw.as_ptr()) };
         }
     }
 }
-
-// ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -549,21 +550,19 @@ mod tests {
 
     #[test]
     fn from_raw_borrowed_rejects_null() {
-        let result = Printer::from_raw_borrowed(std::ptr::null_mut());
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CpdbError::NullPointer));
+        let r = Printer::from_raw_borrowed(std::ptr::null_mut());
+        assert!(matches!(r, Err(CpdbError::NullPointer)));
     }
 
     #[test]
     fn from_raw_owned_rejects_null() {
-        let result = Printer::from_raw_owned(std::ptr::null_mut());
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CpdbError::NullPointer));
+        let r = Printer::from_raw_owned(std::ptr::null_mut());
+        assert!(matches!(r, Err(CpdbError::NullPointer)));
     }
 
     #[test]
     fn load_from_nonexistent_file_returns_error() {
-        let result = Printer::load_from_file("/tmp/nonexistent-cpdb-printer-pickle-test");
-        assert!(result.is_err());
+        let r = Printer::load_from_file("/tmp/cpdb-rs-nonexistent-pickle-file");
+        assert!(r.is_err());
     }
 }

@@ -1,44 +1,30 @@
-extern crate bindgen;
-extern crate pkg_config;
+//! Build script: locates cpdb-libs via pkg-config (preferred) or an
+//! explicit `CPDB_LIBS_PATH` override, then generates bindings with
+//! bindgen.
+//!
+//! Environment knobs:
+//!
+//! - `CPDB_LIBS_PATH` — point at an installed-or-built cpdb-libs prefix
+//!   when pkg-config is unavailable.
+//! - `CPDB_NO_LINK=1` — emit no `rustc-link-*` directives (used by the
+//!   macOS CI job which only checks that bindgen + compile succeed).
+//! - `BINDGEN_EXTRA_CLANG_ARGS` — forwarded to bindgen as extra `clang`
+//!   args (standard bindgen knob, repeated here for visibility).
 
 use std::env;
 use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=include/wrapper.h");
+    println!("cargo:rerun-if-env-changed=CPDB_LIBS_PATH");
+    println!("cargo:rerun-if-env-changed=CPDB_NO_LINK");
+    println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
 
-    let skip_link = matches!(
-        env::var("CPDB_NO_LINK").ok().as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    );
+    let skip_link = env_truthy("CPDB_NO_LINK");
 
-    // Try to find cpdb-libs installation
-    let cpdb_libs_path = find_cpdb_libs();
+    let (cpdb_includes, glib_includes) = locate_includes(skip_link);
 
-    // --- Linker Configuration ---
-    if !skip_link {
-        if let Some(ref cpdb_path) = cpdb_libs_path {
-            println!("cargo:rustc-link-search=native={}/cpdb/.libs", cpdb_path);
-            println!("cargo:rustc-link-search=native={}/.libs", cpdb_path);
-            println!("cargo:include={}", cpdb_path);
-            println!("cargo:include={}/cpdb", cpdb_path);
-        }
-
-        add_system_library_paths();
-
-        println!("cargo:rustc-link-lib=cpdb");
-        println!("cargo:rustc-link-lib=cpdb-frontend");
-        if matches!(
-            env::var("CPDB_LINK_BACKEND").ok().as_deref(),
-            Some("1") | Some("true") | Some("yes")
-        ) {
-            println!("cargo:rustc-link-lib=cpdb-backend");
-        }
-        println!("cargo:rustc-link-lib=glib-2.0");
-        println!("cargo:rustc-link-lib=gobject-2.0");
-    }
-
-    // --- Bindgen Builder Setup ---
     let mut builder = bindgen::Builder::default()
         .header("include/wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -48,238 +34,232 @@ fn main() {
         .ctypes_prefix("libc")
         .layout_tests(false)
         .rust_edition(bindgen::RustEdition::Edition2024)
-        .raw_line("use libc;")
-        .raw_line("#[allow(non_upper_case_globals)]")
-        .raw_line("#[allow(non_camel_case_types)]")
-        .raw_line("#[allow(non_snake_case)]")
-        .raw_line("#[allow(dead_code)]");
+        .raw_line("use libc;");
 
-    // Add include paths
-    if let Some(ref cpdb_path) = cpdb_libs_path {
-        builder = builder.clang_arg(format!("-I{}", cpdb_path));
-        builder = builder.clang_arg(format!("-I{}/cpdb", cpdb_path));
-        println!("Using cpdb-libs include path for bindgen: {}", cpdb_path);
-    } else {
-        let home_dir = env::var("HOME").unwrap_or_default();
-        let cpdb_libs_project_root_for_includes = format!("{}/cpdb-libs", home_dir);
-        builder = builder.clang_arg(format!("-I{}", cpdb_libs_project_root_for_includes));
-        builder = builder.clang_arg(format!("-I{}/cpdb", cpdb_libs_project_root_for_includes));
-        println!(
-            "Using fallback cpdb-libs include path for bindgen: {}",
-            cpdb_libs_project_root_for_includes
-        );
+    for path in &cpdb_includes {
+        builder = builder.clang_arg(format!("-I{}", path.display()));
+    }
+    for path in &glib_includes {
+        builder = builder.clang_arg(format!("-I{}", path.display()));
     }
 
-    if let Ok(lib_glib) = pkg_config::Config::new().probe("glib-2.0") {
-        for path in lib_glib.include_paths {
-            builder = builder.clang_arg(format!("-I{}", path.display()));
-        }
-    } else {
-        println!(
-            "Warning: glib-2.0 not found via pkg-config. Adding default system GLib include paths for bindgen."
-        );
-        builder = builder.clang_arg("-I/usr/include/glib-2.0");
-        builder = builder.clang_arg("-I/usr/lib/x86_64-linux-gnu/glib-2.0/include");
-    }
-    builder = builder.clang_arg("-I/usr/include");
-
-    // Forward any extra clang args from the environment.
-    // The macOS CI step sets BINDGEN_EXTRA_CLANG_ARGS to point bindgen at the
-    // cpdb-libs source headers; without this the variable is silently ignored.
     if let Ok(extra) = env::var("BINDGEN_EXTRA_CLANG_ARGS") {
         for arg in extra.split_whitespace() {
             builder = builder.clang_arg(arg);
         }
     }
 
-    let functions_to_allow = [
-        // Core functions
-        "cpdbGetVersion",
-        "cpdbInit",
-        // Frontend functions
-        "cpdbGetNewFrontendObj",
-        "cpdbConnectToDBus",
-        "cpdbDisconnectFromDBus",
-        "cpdbStartListingPrinters",
-        "cpdbStopListingPrinters",
-        "cpdbDeleteFrontendObj",
-        "cpdbGetPrinters",
-        /* "cpdbGetPrinter", */ "cpdbGetAllPrinters",
-        "cpdbFindPrinterObj",
-        "cpdbGetDefaultPrinter",
-        "cpdbGetDefaultPrinterForBackend",
-        "cpdbSetUserDefaultPrinter",
-        "cpdbSetSystemDefaultPrinter",
-        "cpdbAddPrinter",
-        "cpdbRemovePrinter",
-        "cpdbHideRemotePrinters",
-        "cpdbUnhideRemotePrinters",
-        "cpdbHideTemporaryPrinters",
-        "cpdbUnhideTemporaryPrinters",
-        "cpdbRefreshPrinterList",
-        "cpdbActivateBackends",
-        "cpdbStartBackendListRefreshing",
-        "cpdbStopBackendListRefreshing",
-        // Printer functions
-        "cpdbGetNewPrinterObj",
-        "cpdbDeletePrinterObj",
-        "cpdbGetState",
-        "cpdbIsAcceptingJobs",
-        "cpdbPrintFile",
-        "cpdbPrintFileWithJobTitle",
-        "cpdbPrintFD",
-        "cpdbPrintSocket",
-        "cpdbGetAllOptions",
-        "cpdbGetOption",
-        "cpdbGetDefault",
-        "cpdbGetSetting",
-        "cpdbGetCurrent",
-        "cpdbAddSettingToPrinter",
-        "cpdbClearSettingFromPrinter",
-        "cpdbAcquireDetails",
-        "cpdbAcquireTranslations",
-        "cpdbGetAllTranslations",
-        "cpdbGetOptionTranslation",
-        "cpdbGetChoiceTranslation",
-        "cpdbGetGroupTranslation",
-        "cpdbGetMedia",
-        "cpdbGetMediaSize",
-        "cpdbGetMediaMargins",
-        "cpdbPicklePrinterToFile",
-        "cpdbResurrectPrinterFromFile",
-        // Backend functions
-        "cpdbGetNewBackendObj",
-        "cpdbSubmitJob",
-        "cpdbDeleteBackendObj",
-        // Job functions
-        "cpdbNewPrintJob",
-        "cpdbSubmitPrintJobWithFile",
-        "cpdbCancelJobById",
-        "cpdbDeletePrintJob",
-        // Settings functions
-        "cpdbGetNewSettings",
-        "cpdbDeleteSettings",
-        "cpdbCopySettings",
-        "cpdbAddSetting",
-        "cpdbClearSetting",
-        "cpdbSerializeToGVariant",
-        "cpdbSaveSettingsToDisk",
-        "cpdbReadSettingsFromDisk",
-        // Options functions
-        "cpdbGetNewOptions",
-        "cpdbDeleteOptions",
-        "cpdbDeleteOption",
-        // Media functions
-        "cpdbDeleteMedia",
-        // Utility functions
-        "cpdbNewCStringArray",
-        "cpdbGetBoolean",
-        "cpdbConcatSep",
-        "cpdbConcatPath",
-        "cpdbGetUserConfDir",
-        "cpdbGetSysConfDir",
-        "cpdbGetAbsolutePath",
-        "cpdbGetGroup",
-        "cpdbGetGroupTranslation2",
-        "cpdbFDebugPrintf",
-        "cpdbBDebugPrintf",
-        "cpdbUnpackStringArray",
-        "cpdbPackStringArray",
-        "cpdbPackMediaArray",
-        // Callback functions
-        "cpdbPrinterCallback",
-        "cpdbOnPrinterAdded",
-        "cpdbOnPrinterRemoved",
-        "cpdbOnPrinterStateChanged",
-        "cpdbFillBasicOptions",
-        "cpdbDebugPrinter",
-        "cpdbPrintBasicOptions",
-        // Lookup functions
-        "hideRemoteLookup",
-        "showRemoteLookup",
-        "hideTemporaryLookup",
-        "showTemporaryLookup",
-        "stopListingLookup",
-        "getAllPrintersLookup",
-        // Backend creation
-        "cpdbCreateBackend",
-        "cpdbGetDbusConnection",
-        "cpdbIgnoreLastSavedSettings",
-    ];
-
-    let types_to_allow = [
-        "cpdb_frontend_obj_s",
-        "cpdb_frontend_obj_t",
-        "cpdb_printer_obj_s",
-        "cpdb_printer_obj_t",
-        "cpdb_option_t",
-        "cpdb_options_t",
-        "cpdb_media_t",
-        "cpdb_margin_t",
-        "cpdb_printer_callback",
-        "cpdb_backend_obj_s",
-        "cpdb_backend_obj_t",
-        "cpdb_print_job_s",
-        "cpdb_print_job_t",
-        "CpdbDebugLevel",
-        "gboolean",
-    ];
-
-    for func_name in functions_to_allow.iter() {
-        builder = builder.allowlist_function(func_name);
+    for func in ALLOWED_FUNCTIONS {
+        builder = builder.allowlist_function(func);
     }
-    for type_name in types_to_allow.iter() {
-        builder = builder.allowlist_type(type_name);
+    for ty in ALLOWED_TYPES {
+        builder = builder.allowlist_type(ty);
     }
 
-    let bindings = builder.generate().expect("Unable to generate bindings");
+    let bindings = builder
+        .generate()
+        .expect("unable to generate cpdb-libs bindings");
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out_path = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
     bindings
         .write_to_file(out_path.join("cpdb_sys.rs"))
-        .expect("Couldn't write bindings!");
+        .expect("failed to write bindings file");
 }
 
-fn find_cpdb_libs() -> Option<String> {
-    if let Ok(path) = env::var("CPDB_LIBS_PATH") {
-        return Some(path);
+fn env_truthy(name: &str) -> bool {
+    matches!(env::var(name).ok().as_deref(), Some("1" | "true" | "yes"))
+}
+
+/// Locates the cpdb-libs and glib-2.0 include paths and emits linker directives.
+///
+/// The preferred path is pkg-config (the upstream library ships `cpdb.pc`).
+/// An explicit `CPDB_LIBS_PATH` override is consulted only when pkg-config
+/// cannot find cpdb.
+fn locate_includes(skip_link: bool) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut cpdb_includes = Vec::new();
+
+    // 1. pkg-config (primary). probe() emits cargo:rustc-link-* directives
+    //    automatically when not skipping link.
+    let cpdb_via_pkg = if skip_link {
+        pkg_config::Config::new()
+            .cargo_metadata(false)
+            .probe("cpdb")
+            .ok()
+    } else {
+        pkg_config::Config::new().probe("cpdb").ok()
+    };
+    let cpdb_frontend_via_pkg = if skip_link {
+        pkg_config::Config::new()
+            .cargo_metadata(false)
+            .probe("cpdb-frontend")
+            .ok()
+    } else {
+        pkg_config::Config::new().probe("cpdb-frontend").ok()
+    };
+
+    if let Some(lib) = &cpdb_via_pkg {
+        cpdb_includes.extend(lib.include_paths.iter().cloned());
+    }
+    if let Some(lib) = &cpdb_frontend_via_pkg {
+        cpdb_includes.extend(lib.include_paths.iter().cloned());
     }
 
-    let home_dir = env::var("HOME").unwrap_or_default();
-    let cpdb_home_path = format!("{}/cpdb-libs", home_dir);
-    let cpdb_local_path = format!("{}/.local/lib/cpdb-libs", home_dir);
-    let common_paths = [
-        "/usr/local/lib/cpdb-libs",
-        "/usr/lib/cpdb-libs",
-        "/opt/cpdb-libs",
-        cpdb_home_path.as_str(),
-        cpdb_local_path.as_str(),
-    ];
-
-    for path in &common_paths {
-        if std::path::Path::new(path).exists() {
-            return Some(path.to_string());
+    // 2. Explicit env-var override. Useful for development builds against
+    //    an uninstalled cpdb-libs checkout.
+    if let Ok(path) = env::var("CPDB_LIBS_PATH") {
+        let root = PathBuf::from(&path);
+        cpdb_includes.push(root.clone());
+        cpdb_includes.push(root.join("cpdb"));
+        if !skip_link {
+            println!("cargo:rustc-link-search=native={path}/cpdb/.libs");
+            println!("cargo:rustc-link-search=native={path}/.libs");
         }
     }
 
-    if let Ok(lib) = pkg_config::Config::new().probe("cpdb")
-        && let Some(path) = lib.link_paths.first()
-    {
-        return Some(path.to_string_lossy().to_string());
+    if cpdb_via_pkg.is_none() && env::var("CPDB_LIBS_PATH").is_err() && !skip_link {
+        println!(
+            "cargo:warning=cpdb-libs not found via pkg-config and CPDB_LIBS_PATH is unset; \
+             linking may fail. Install libcpdb-dev (Debian/Ubuntu) or cpdb-libs-devel \
+             (Fedora) and ensure pkg-config can find cpdb.pc."
+        );
     }
 
-    None
-}
-
-fn add_system_library_paths() {
-    let target = env::var("TARGET").unwrap_or_default();
-
-    if target.contains("linux") {
-        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
-        println!("cargo:rustc-link-search=native=/usr/lib");
-        println!("cargo:rustc-link-search=native=/lib/x86_64-linux-gnu");
-    } else if target.contains("darwin") {
-        println!("cargo:rustc-link-search=native=/usr/local/lib");
-        println!("cargo:rustc-link-search=native=/opt/homebrew/lib");
+    // 3. glib include paths come from pkg-config too.
+    let mut glib_includes = Vec::new();
+    let glib_via_pkg = if skip_link {
+        pkg_config::Config::new()
+            .cargo_metadata(false)
+            .probe("glib-2.0")
+            .ok()
+    } else {
+        pkg_config::Config::new().probe("glib-2.0").ok()
+    };
+    if let Some(lib) = &glib_via_pkg {
+        glib_includes.extend(lib.include_paths.iter().cloned());
+    } else {
+        println!(
+            "cargo:warning=glib-2.0 not found via pkg-config; bindgen may fail to parse <glib.h>."
+        );
     }
+
+    // 4. Linker libraries. With pkg-config we've already emitted link
+    //    directives; only fall back to explicit names when pkg-config
+    //    failed entirely.
+    if !skip_link && cpdb_via_pkg.is_none() {
+        println!("cargo:rustc-link-lib=cpdb");
+        println!("cargo:rustc-link-lib=cpdb-frontend");
+        if !skip_link && glib_via_pkg.is_none() {
+            println!("cargo:rustc-link-lib=glib-2.0");
+            println!("cargo:rustc-link-lib=gobject-2.0");
+        }
+    }
+
+    (cpdb_includes, glib_includes)
 }
+
+// ─── Allowlists ──────────────────────────────────────────────────────────────
+
+/// C functions exposed via the generated bindings. Anything outside this
+/// list is filtered out by bindgen.
+const ALLOWED_FUNCTIONS: &[&str] = &[
+    // Core
+    "cpdbGetVersion",
+    "cpdbInit",
+    // Frontend lifecycle
+    "cpdbGetNewFrontendObj",
+    "cpdbDeleteFrontendObj",
+    "cpdbConnectToDBus",
+    "cpdbDisconnectFromDBus",
+    "cpdbStartListingPrinters",
+    "cpdbStopListingPrinters",
+    "cpdbActivateBackends",
+    "cpdbStartBackendListRefreshing",
+    "cpdbStopBackendListRefreshing",
+    "cpdbIgnoreLastSavedSettings",
+    // Printer discovery and defaults
+    "cpdbGetAllPrinters",
+    "cpdbFindPrinterObj",
+    "cpdbGetDefaultPrinter",
+    "cpdbGetDefaultPrinterForBackend",
+    "cpdbSetUserDefaultPrinter",
+    "cpdbSetSystemDefaultPrinter",
+    "cpdbAddPrinter",
+    "cpdbRemovePrinter",
+    "cpdbRefreshPrinterList",
+    "cpdbHideRemotePrinters",
+    "cpdbUnhideRemotePrinters",
+    "cpdbHideTemporaryPrinters",
+    "cpdbUnhideTemporaryPrinters",
+    // Printer object
+    "cpdbGetNewPrinterObj",
+    "cpdbDeletePrinterObj",
+    "cpdbGetState",
+    "cpdbIsAcceptingJobs",
+    "cpdbPrintFile",
+    "cpdbPrintFileWithJobTitle",
+    "cpdbPrintFD",
+    "cpdbPrintSocket",
+    "cpdbGetAllOptions",
+    "cpdbGetOption",
+    "cpdbGetDefault",
+    "cpdbGetSetting",
+    "cpdbGetCurrent",
+    "cpdbAddSettingToPrinter",
+    "cpdbClearSettingFromPrinter",
+    "cpdbAcquireDetails",
+    "cpdbAcquireTranslations",
+    "cpdbGetAllTranslations",
+    "cpdbGetOptionTranslation",
+    "cpdbGetChoiceTranslation",
+    "cpdbGetGroupTranslation",
+    "cpdbGetMedia",
+    "cpdbGetMediaSize",
+    "cpdbGetMediaMargins",
+    "cpdbPicklePrinterToFile",
+    "cpdbResurrectPrinterFromFile",
+    // Settings
+    "cpdbGetNewSettings",
+    "cpdbDeleteSettings",
+    "cpdbCopySettings",
+    "cpdbAddSetting",
+    "cpdbClearSetting",
+    "cpdbSerializeToGVariant",
+    "cpdbSaveSettingsToDisk",
+    "cpdbReadSettingsFromDisk",
+    // Options / media
+    "cpdbGetNewOptions",
+    "cpdbDeleteOptions",
+    "cpdbDeleteOption",
+    "cpdbDeleteMedia",
+    // Misc utilities exposed by the C API
+    "cpdbGetUserConfDir",
+    "cpdbGetSysConfDir",
+    "cpdbGetAbsolutePath",
+    "cpdbGetGroup",
+    "cpdbConcatSep",
+    "cpdbConcatPath",
+    "cpdbPackStringArray",
+    "cpdbUnpackStringArray",
+    "cpdbPackMediaArray",
+    "cpdbDebugPrinter",
+    "cpdbPrintBasicOptions",
+    "cpdbFillBasicOptions",
+];
+
+/// C types exposed via the generated bindings.
+const ALLOWED_TYPES: &[&str] = &[
+    "cpdb_frontend_obj_s",
+    "cpdb_frontend_obj_t",
+    "cpdb_printer_obj_s",
+    "cpdb_printer_obj_t",
+    "cpdb_option_t",
+    "cpdb_options_t",
+    "cpdb_settings_t",
+    "cpdb_media_t",
+    "cpdb_margin_t",
+    "cpdb_printer_callback",
+    "cpdb_async_callback",
+    "cpdb_printer_update_t",
+    "CpdbDebugLevel",
+    "gboolean",
+];

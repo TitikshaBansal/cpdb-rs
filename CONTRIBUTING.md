@@ -6,7 +6,7 @@ Thank you for your interest in contributing to cpdb-rs! This document provides g
 
 ### Prerequisites
 
-- Rust 1.70+ (2021 edition)
+- Rust 1.85+ (2024 edition)
 - cpdb-libs C library installed on your system
 - Git
 
@@ -20,7 +20,7 @@ Thank you for your interest in contributing to cpdb-rs! This document provides g
    ```
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/original-username/cpdb-rs.git
+   git remote add upstream https://github.com/OpenPrinting/cpdb-rs.git
    ```
 4. Install dependencies:
    ```bash
