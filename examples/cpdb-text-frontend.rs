@@ -39,7 +39,7 @@ fn run_command_loop(frontend: &Frontend) {
         if stdin.lock().read_line(&mut line).unwrap() == 0 {
             break;
         }
-        let parts: Vec<&str> = line.trim().split_whitespace().collect();
+        let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() {
             continue;
         }
@@ -309,10 +309,7 @@ fn run_command_loop(frontend: &Frontend) {
                                 let name = p.name().unwrap_or_default();
                                 let backend = p.backend_name().unwrap_or_default();
                                 if ok {
-                                    println!(
-                                        "Translations acquired for {} : {}",
-                                        name, backend
-                                    );
+                                    println!("Translations acquired for {} : {}", name, backend);
                                     print_translations(&p.translations());
                                 } else {
                                     println!(
@@ -435,10 +432,7 @@ fn cmd_get_all_options(frontend: &Frontend, printer_id: &str, backend_name: &str
     };
 
     // Ensure the backend has populated the options table before reading it.
-    if let Err(e) = p.acquire_details() {
-        eprintln!("acquire_details failed: {}", e);
-        return;
-    }
+    p.acquire_details();
 
     match p.get_options_collection() {
         Ok(collection) if collection.is_empty() => {

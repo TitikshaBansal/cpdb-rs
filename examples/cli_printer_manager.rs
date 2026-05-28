@@ -36,12 +36,12 @@ fn main() -> ExResult {
 
     match cmd {
         "list" => list_printers(),
-        "info" => with_arg(&args, 2, |name| show_printer_info(name)),
-        "print" => with_two_args(&args, |p, f| print_file(p, f)),
-        "options" => with_arg(&args, 2, |name| show_printer_options(name)),
-        "media" => with_arg(&args, 2, |name| show_printer_media(name)),
-        "save-config" => with_two_args(&args, |p, f| save_printer_config(p, f)),
-        "load-config" => with_arg(&args, 2, |f| load_printer_config(f)),
+        "info" => with_arg(&args, 2, show_printer_info),
+        "print" => with_two_args(&args, print_file),
+        "options" => with_arg(&args, 2, show_printer_options),
+        "media" => with_arg(&args, 2, show_printer_media),
+        "save-config" => with_two_args(&args, save_printer_config),
+        "load-config" => with_arg(&args, 2, load_printer_config),
         other => {
             eprintln!("unknown command: {other}");
             print_usage(&prog);
@@ -94,7 +94,10 @@ fn list_printers() -> ExResult {
         println!("no printers discovered");
         return Ok(());
     }
-    println!("{:<24} {:<14} {:<18} {:<10}", "Name", "Backend", "State", "Accepts");
+    println!(
+        "{:<24} {:<14} {:<18} {:<10}",
+        "Name", "Backend", "State", "Accepts"
+    );
     println!("{}", "-".repeat(70));
     for p in printers {
         let name = p.name().unwrap_or_else(|_| "?".into());

@@ -72,8 +72,14 @@ fn to_c_options_round_trips() {
 
 #[test]
 fn error_messages_are_stable() {
-    assert_eq!(format!("{}", CpdbError::NullPointer), "Null pointer encountered");
-    assert_eq!(format!("{}", CpdbError::InvalidPrinter), "Invalid printer object");
+    assert_eq!(
+        format!("{}", CpdbError::NullPointer),
+        "Null pointer encountered"
+    );
+    assert_eq!(
+        format!("{}", CpdbError::InvalidPrinter),
+        "Invalid printer object"
+    );
     assert_eq!(
         format!("{}", CpdbError::NotFound("printer 'x'".into())),
         "Not found: printer 'x'"

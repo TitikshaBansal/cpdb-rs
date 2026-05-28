@@ -22,8 +22,8 @@ pub mod util;
 
 pub use callbacks::PrinterUpdate;
 pub use common::{
-    absolute_path, concat_path, concat_sep, init, option_group, system_config_dir,
-    user_config_dir, version,
+    absolute_path, concat_path, concat_sep, init, option_group, system_config_dir, user_config_dir,
+    version,
 };
 pub use error::{CpdbError, Result};
 pub use frontend::Frontend;

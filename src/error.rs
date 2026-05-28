@@ -1,3 +1,5 @@
+//! Crate-wide error type and `Result` alias.
+
 use std::ffi::NulError;
 use std::str::Utf8Error;
 use thiserror::Error;

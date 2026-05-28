@@ -93,13 +93,17 @@ fn emit_docsrs_stub() {
 }
 
 const DOCSRS_STUB: &str = r#"
-//! Stub bindings emitted for docs.rs builds.
-//!
-//! docs.rs builds in a sandbox without cpdb-libs installed, so the real
-//! bindgen output is unavailable. This stub mirrors the public surface
-//! of the bindgen output well enough to compile, but contains no
-//! implementations — every function symbol is left unresolved. Library
-//! crates do not invoke the linker during `cargo doc`, so this is safe.
+// Stub bindings emitted for docs.rs / DOCS_RS builds.
+//
+// This file is `include!`-d into `src/ffi.rs`, so inner doc comments
+// (`//!`) are not allowed at the top — they would re-annotate the
+// including module. Plain line comments only.
+//
+// docs.rs builds in a sandbox without cpdb-libs installed, so the real
+// bindgen output is unavailable. This stub mirrors the public surface
+// of the bindgen output well enough to compile, but contains no
+// implementations — every function symbol is left unresolved. Library
+// crates do not invoke the linker during `cargo doc`, so this is safe.
 
 use libc;
 
@@ -587,6 +591,8 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "cpdbDebugPrinter",
     "cpdbPrintBasicOptions",
     "cpdbFillBasicOptions",
+    // D-Bus connection probe.
+    "cpdbGetDbusConnection",
 ];
 
 /// C types exposed via the generated bindings.

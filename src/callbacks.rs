@@ -100,8 +100,12 @@ pub(crate) unsafe extern "C" fn printer_trampoline(
             None => return,
         }
     };
-    let Some(update) = PrinterUpdate::from_raw(update) else { return };
-    let Ok(printer) = Printer::from_raw_borrowed(printer) else { return };
+    let Some(update) = PrinterUpdate::from_raw(update) else {
+        return;
+    };
+    let Ok(printer) = Printer::from_raw_borrowed(printer) else {
+        return;
+    };
 
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
         // Poisoning is benign here — the closure will get a fresh frame on
@@ -143,7 +147,9 @@ pub(crate) unsafe extern "C" fn acquire_trampoline(
     let outer: Box<Box<AcquireCompletion>> =
         unsafe { Box::from_raw(user_data as *mut Box<AcquireCompletion>) };
 
-    let Ok(printer) = Printer::from_raw_borrowed(printer) else { return };
+    let Ok(printer) = Printer::from_raw_borrowed(printer) else {
+        return;
+    };
     let closure: Box<AcquireCompletion> = *outer;
 
     let _ = std::panic::catch_unwind(AssertUnwindSafe(move || {

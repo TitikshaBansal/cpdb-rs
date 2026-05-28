@@ -19,7 +19,9 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> Result<String> {
         return Err(CpdbError::NullPointer);
     }
     // SAFETY: caller guarantees `ptr` references a live NUL-terminated string.
-    Ok(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+    Ok(unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned())
 }
 
 /// Same as [`cstr_to_string`] but frees the underlying buffer with `g_free`.
@@ -35,7 +37,9 @@ pub unsafe fn cstr_to_string_and_g_free(ptr: *mut c_char) -> Result<String> {
         return Err(CpdbError::NullPointer);
     }
     // SAFETY: caller guarantees ownership of a GLib-allocated string.
-    let owned = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    let owned = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
     unsafe { glib_sys::g_free(ptr as glib_sys::gpointer) };
     Ok(owned)
 }

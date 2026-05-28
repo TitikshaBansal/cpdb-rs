@@ -10,7 +10,7 @@ fn write_temp_test_file(name: &str) -> std::path::PathBuf {
     let mut path = std::env::temp_dir();
     path.push(name);
     let mut f = fs::File::create(&path).expect("failed to create test print file");
-    write!(f, "cpdb-rs integration test\n").unwrap();
+    writeln!(f, "cpdb-rs integration test").unwrap();
     path
 }
 

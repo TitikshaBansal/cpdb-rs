@@ -156,9 +156,9 @@ impl Frontend {
     pub fn start_listing(cb: ffi::cpdb_printer_callback) -> Result<Self> {
         // SAFETY: callback may be null per upstream docs.
         let raw = unsafe { ffi::cpdbStartListingPrinters(cb) };
-        NonNull::new(raw)
-            .map(|raw| Self { raw })
-            .ok_or_else(|| CpdbError::FrontendError("cpdbStartListingPrinters returned null".into()))
+        NonNull::new(raw).map(|raw| Self { raw }).ok_or_else(|| {
+            CpdbError::FrontendError("cpdbStartListingPrinters returned null".into())
+        })
     }
 
     /// Stops the printer-listing flow.
@@ -229,9 +229,8 @@ impl Frontend {
     pub fn get_default_printer_for_backend(&self, backend_name: &str) -> Result<Printer<'_>> {
         let c_backend = CString::new(backend_name)?;
         // SAFETY: pointer is non-null; the CString outlives the call.
-        let raw = unsafe {
-            ffi::cpdbGetDefaultPrinterForBackend(self.raw.as_ptr(), c_backend.as_ptr())
-        };
+        let raw =
+            unsafe { ffi::cpdbGetDefaultPrinterForBackend(self.raw.as_ptr(), c_backend.as_ptr()) };
         if raw.is_null() {
             Err(CpdbError::NotFound(format!(
                 "default printer for backend '{backend_name}'"
@@ -285,9 +284,8 @@ impl Frontend {
         let c_id = CString::new(printer_id)?;
         let c_backend = CString::new(backend_name)?;
         // SAFETY: pointers are non-null; the CStrings outlive the call.
-        let raw = unsafe {
-            ffi::cpdbRemovePrinter(self.raw.as_ptr(), c_id.as_ptr(), c_backend.as_ptr())
-        };
+        let raw =
+            unsafe { ffi::cpdbRemovePrinter(self.raw.as_ptr(), c_id.as_ptr(), c_backend.as_ptr()) };
         if raw.is_null() {
             Ok(None)
         } else {
@@ -299,8 +297,7 @@ impl Frontend {
     pub fn refresh_printer_list(&self, backend_name: &str) -> Result<bool> {
         let c_backend = CString::new(backend_name)?;
         // SAFETY: pointers are non-null; the CString outlives the call.
-        let ok =
-            unsafe { ffi::cpdbRefreshPrinterList(self.raw.as_ptr(), c_backend.as_ptr()) };
+        let ok = unsafe { ffi::cpdbRefreshPrinterList(self.raw.as_ptr(), c_backend.as_ptr()) };
         Ok(ok)
     }
 

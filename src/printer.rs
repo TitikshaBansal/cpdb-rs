@@ -334,9 +334,8 @@ impl<'frontend> Printer<'frontend> {
         let c_title = CString::new(title)?;
         let mut jobid_ptr: *mut c_char = std::ptr::null_mut();
         // SAFETY: cpdb returns a `g_strdup`'d socket path we own.
-        let socket_ptr = unsafe {
-            ffi::cpdbPrintSocket(self.raw.as_ptr(), &mut jobid_ptr, c_title.as_ptr())
-        };
+        let socket_ptr =
+            unsafe { ffi::cpdbPrintSocket(self.raw.as_ptr(), &mut jobid_ptr, c_title.as_ptr()) };
         if socket_ptr.is_null() {
             if !jobid_ptr.is_null() {
                 unsafe { glib_sys::g_free(jobid_ptr as glib_sys::gpointer) };
@@ -381,11 +380,13 @@ impl<'frontend> Printer<'frontend> {
         }
         // SAFETY: cpdbPrintFileWithJobTitle returns a `g_strdup`'d job ID we own.
         unsafe {
-            let id =
-                ffi::cpdbPrintFileWithJobTitle(self.raw.as_ptr(), c_path.as_ptr(), c_title.as_ptr());
-            util::cstr_to_string_and_g_free(id).map_err(|_| {
-                CpdbError::JobFailed("cpdbPrintFileWithJobTitle returned null".into())
-            })
+            let id = ffi::cpdbPrintFileWithJobTitle(
+                self.raw.as_ptr(),
+                c_path.as_ptr(),
+                c_title.as_ptr(),
+            );
+            util::cstr_to_string_and_g_free(id)
+                .map_err(|_| CpdbError::JobFailed("cpdbPrintFileWithJobTitle returned null".into()))
         }
     }
 
@@ -549,12 +550,7 @@ impl<'frontend> Printer<'frontend> {
         let (mut width, mut length): (i32, i32) = (0, 0);
         // SAFETY: passing valid pointers to two stack-allocated `i32`s.
         let rc = unsafe {
-            ffi::cpdbGetMediaSize(
-                self.raw.as_ptr(),
-                c_name.as_ptr(),
-                &mut width,
-                &mut length,
-            )
+            ffi::cpdbGetMediaSize(self.raw.as_ptr(), c_name.as_ptr(), &mut width, &mut length)
         };
         if rc == 0 {
             Ok(MediaSize { width, length })
@@ -568,8 +564,9 @@ impl<'frontend> Printer<'frontend> {
         let c_name = CString::new(media_name)?;
         let mut raw_margins: *mut ffi::cpdb_margin_t = std::ptr::null_mut();
         // SAFETY: passing valid pointers; cpdb-libs writes to `raw_margins`.
-        let count =
-            unsafe { ffi::cpdbGetMediaMargins(self.raw.as_ptr(), c_name.as_ptr(), &mut raw_margins) };
+        let count = unsafe {
+            ffi::cpdbGetMediaMargins(self.raw.as_ptr(), c_name.as_ptr(), &mut raw_margins)
+        };
         if count <= 0 || raw_margins.is_null() {
             return Err(CpdbError::NotFound(format!("media margins '{media_name}'")));
         }
@@ -636,11 +633,8 @@ impl<'frontend> Printer<'frontend> {
         let c_locale = CString::new(locale)?;
         // SAFETY: cpdb returns a `g_strdup`'d translation string we own.
         unsafe {
-            let t = ffi::cpdbGetOptionTranslation(
-                self.raw.as_ptr(),
-                c_opt.as_ptr(),
-                c_locale.as_ptr(),
-            );
+            let t =
+                ffi::cpdbGetOptionTranslation(self.raw.as_ptr(), c_opt.as_ptr(), c_locale.as_ptr());
             translation_to_option(t)
         }
     }
@@ -781,7 +775,9 @@ impl<'frontend> Printer<'frontend> {
                 if key.is_null() || value.is_null() {
                     continue;
                 }
-                let k = CStr::from_ptr(key as *const c_char).to_string_lossy().into_owned();
+                let k = CStr::from_ptr(key as *const c_char)
+                    .to_string_lossy()
+                    .into_owned();
                 let v = CStr::from_ptr(value as *const c_char)
                     .to_string_lossy()
                     .into_owned();
