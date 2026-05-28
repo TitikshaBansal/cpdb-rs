@@ -78,7 +78,7 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 | D-3.1 | HIGH | [x] | `build.rs` rewritten to use `pkg-config --variable=libdir glib-2.0` and `pkg-config cpdb`. Architecture-specific path guesses removed. | `build.rs` |
 | D-3.2 | HIGH | [x] | pkg-config is now the primary discovery path; `CPDB_LIBS_PATH` is an explicit escape hatch. A warning is emitted when neither hits. | `build.rs` |
 | D-3.3 | HIGH | [x] | Unused `frontend`/`backend` features removed from `Cargo.toml`. | `Cargo.toml` |
-| D-3.4 | HIGH | [x] | Global `dead_code` / `non_snake_case` allows scoped to `src/ffi.rs` only. `src/lib.rs` now uses `#![warn(missing_docs)]`. | `src/lib.rs`, `src/ffi.rs` |
+| D-3.4 | HIGH | [x] | Global `dead_code` / `non_snake_case` allows scoped to `src/ffi.rs` only. `src/lib.rs` now uses `#![deny(missing_docs)]`. | `src/lib.rs`, `src/ffi.rs` |
 | D-3.5 | MED | [x] | Added `links = "cpdb"` to `[package]`. | `Cargo.toml` |
 | D-3.6 | MED | [x] | `CONTRIBUTING.md` updated to Rust 1.85 / 2024 edition to match `Cargo.toml`. | `CONTRIBUTING.md` |
 | D-3.7 | MED | [ ] | Consider splitting bindgen output into a `cpdb-sys` crate. Cleaner layering; defer to 0.2. | |
@@ -91,8 +91,8 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 |---|---|---|---|---|
 | E-4.1 | HIGH | [x] | `cargo clippy --all-targets -- -D warnings` job added. | `.github/workflows/ci.yml` |
 | E-4.2 | HIGH | [x] | `cargo fmt --all -- --check` job added. | `.github/workflows/ci.yml` |
-| E-4.3 | HIGH | [ ] | Add `release` workflow (tag-triggered): `cargo publish --dry-run`, build docs, attach release artefacts. | |
-| E-4.4 | HIGH | [~] | `[package.metadata.docs.rs]` added pinning the build to `x86_64-unknown-linux-gnu` and forwarding a `docsrs` cfg. A vendored-header escape for the actual docs.rs builder is still TODO. | `Cargo.toml`, `build.rs` |
+| E-4.3 | HIGH | [x] | `release.yml` workflow triggered on `v*.*.*` tags: installs cpdb-libs, runs fmt + clippy + tests, asserts the tag matches `Cargo.toml`, performs `cargo publish --dry-run`, then creates a GitHub Release with the changelog section auto-extracted. Pre-release marker triggered when the tag contains `-`. | `.github/workflows/release.yml` |
+| E-4.4 | HIGH | [x] | `build.rs` detects the `DOCS_RS` env var and writes a hand-rolled stub `cpdb_sys.rs` (all types, all function signatures, no implementations). Library crates do not invoke the linker during `cargo doc`, so the missing symbols never surface — docs.rs now builds end-to-end. | `build.rs` |
 | E-4.5 | MED | [ ] | Add `dependabot.yml` and `CODEOWNERS`. | |
 | E-4.6 | MED | [ ] | Add `cargo deny check` (licenses, advisories, bans). | |
 | E-4.7 | LOW | [ ] | Minimal D-Bus + dummy-CUPS integration smoke test that runs at least one `#[ignore]`-flagged test in CI. | |
@@ -130,8 +130,8 @@ Reference (do NOT try to wrap — upstream-absent on master): `cpdb_job_t`,
 | ID | Sev | Status | Item | Location |
 |---|---|---|---|---|
 | H-7.1 | HIGH | [x] | README rewritten end-to-end against the shipping API. | `README.md` |
-| H-7.2 | HIGH | [~] | `#![warn(missing_docs)]` added to `src/lib.rs`. Closure-wrapped callback APIs (C-2.3 / C-2.4) are documented. Consider escalating `warn` to `deny` once the FFI module's bindgen output stops triggering it. | `src/lib.rs` |
-| H-7.3 | HIGH | [~] | The cpdb-text-frontend example now uses safe `Printer::get_media_margins` / `MediaSize`. A `print_translations` helper still iterates the raw `translations` GHashTable; promote that to a safe `TranslationMap` in 0.1.x. | `examples/cpdb-text-frontend.rs` |
+| H-7.2 | HIGH | [x] | `#![deny(missing_docs)]` now in `src/lib.rs`. Every public item — including struct fields — has a doc comment. `Margins` converted from a tuple to a named-field struct so its single field can be documented. | `src/lib.rs`, `src/printer.rs` |
+| H-7.3 | HIGH | [x] | `TranslationMap` (owned `HashMap<String,String>` + locale) added to `src/printer.rs`. `Printer::translations()` walks the printer's translation hash table once and returns the owned snapshot. The cpdb-text-frontend example's `print_translations` helper rewritten against it — last raw GHashTable walk in user-facing example code is gone. | `src/printer.rs`, `examples/cpdb-text-frontend.rs` |
 | H-7.4 | MED | [x] | Every `unsafe impl Send/Sync` now carries a `SAFETY:` comment justifying it. | `src/settings.rs`, `src/frontend.rs` |
 | H-7.5 | MED | [x] | CONTRIBUTING.md updated to "Rust 1.85+ (2024 edition)" and the placeholder username fixed. | `CONTRIBUTING.md` |
 | H-7.6 | LOW | [x] | README now includes a dedicated `find_printer(id, backend)` example. | `README.md` |

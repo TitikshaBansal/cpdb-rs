@@ -313,8 +313,7 @@ fn run_command_loop(frontend: &Frontend) {
                                         "Translations acquired for {} : {}",
                                         name, backend
                                     );
-                                    // SAFETY: borrowed printer is valid here.
-                                    print_translations(p.as_raw());
+                                    print_translations(&p.translations());
                                 } else {
                                     println!(
                                         "Could not acquire printer translations for {} : {}",
@@ -392,7 +391,7 @@ fn run_command_loop(frontend: &Frontend) {
                             if let Err(e) = p.get_all_translations(&locale) {
                                 eprintln!("{}", e);
                             } else {
-                                print_translations(p.as_raw());
+                                print_translations(&p.translations());
                             }
                         }
                         Err(e) => eprintln!("{}", e),
@@ -461,9 +460,8 @@ fn cmd_get_all_options(frontend: &Frontend, printer_id: &str, backend_name: &str
 }
 
 // ─── Unsafe command implementations ──────────────────────────────────────────
-// TODO: cmd_get_all_media and print_translations still iterate GHashTable
-// directly. These will be replaced with safe MediaCollection and
-// TranslationMap types in a future PR.
+// TODO: cmd_get_all_media still iterates GHashTable directly. Will be
+// replaced with a safe MediaCollection type in a future PR.
 
 fn cmd_get_all_media(frontend: &Frontend, printer_id: &str, backend_name: &str) {
     match frontend.find_printer(printer_id, backend_name) {
@@ -503,7 +501,7 @@ fn cmd_get_media_margins(
     match frontend.find_printer(printer_id, backend_name) {
         Ok(p) => match p.get_media_margins(media_name) {
             Ok(margins) => {
-                for m in &margins.0 {
+                for m in &margins.entries {
                     println!("{} {} {} {}", m.left, m.right, m.top, m.bottom);
                 }
             }
@@ -531,28 +529,13 @@ fn print_media(media: *const cpdb_rs::ffi::cpdb_media_t) {
     }
 }
 
-fn print_translations(p: *mut cpdb_rs::ffi::cpdb_printer_obj_t) {
-    unsafe {
-        if p.is_null() || (*p).locale.is_null() || (*p).translations.is_null() {
-            println!("No translations found");
-            return;
-        }
-        let table = (*p).translations as *mut glib_sys::GHashTable;
-        let mut iter: glib_sys::GHashTableIter = std::mem::zeroed();
-        let mut key: glib_sys::gpointer = std::ptr::null_mut();
-        let mut value: glib_sys::gpointer = std::ptr::null_mut();
-        glib_sys::g_hash_table_iter_init(&mut iter, table);
-        while glib_sys::g_hash_table_iter_next(&mut iter, &mut key, &mut value)
-            != glib_sys::GFALSE
-        {
-            let k = key as *const libc::c_char;
-            let v = value as *const libc::c_char;
-            if !k.is_null() && !v.is_null() {
-                let ks = std::ffi::CStr::from_ptr(k).to_string_lossy();
-                let vs = std::ffi::CStr::from_ptr(v).to_string_lossy();
-                println!("'{}' : '{}'", ks, vs);
-            }
-        }
+fn print_translations(map: &cpdb_rs::TranslationMap) {
+    if map.is_empty() {
+        println!("No translations found");
+        return;
+    }
+    for (k, v) in &map.entries {
+        println!("'{}' : '{}'", k, v);
     }
 }
 

@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operations. Closure panics are absorbed by `catch_unwind`.
 - `PrinterUpdate` enum (`Added` / `Removed` / `StateChanged`) re-exported from
   the crate root.
+- `Printer::translations()` and the [`TranslationMap`] type — owned
+  snapshot of a printer's translation hash table. No raw FFI required
+  to enumerate translations from user code.
 - `Frontend::add_printer`, `Frontend::remove_printer`,
   `Frontend::refresh_printer_list` — wrappers around the corresponding C
   functions.
@@ -89,9 +92,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list, drops the architecture-specific `/usr/lib/x86_64-linux-gnu` guess,
   and emits a `cargo:warning` when neither pkg-config nor `CPDB_LIBS_PATH`
   produces a hit.
+- `build.rs` detects `DOCS_RS=1` and emits a hand-rolled stub
+  `cpdb_sys.rs` so docs.rs builds without cpdb-libs installed.
 - `Cargo.toml` declares `links = "cpdb"`, removes the unused
   `frontend`/`backend` features, and adds `docs.rs` metadata.
 - CI now runs `cargo fmt --check` and `cargo clippy -D warnings`.
+- `release.yml` workflow added: tag-triggered (`v*.*.*`), runs full
+  verification, asserts the tag matches `Cargo.toml`, performs
+  `cargo publish --dry-run`, and creates a GitHub Release with notes
+  auto-extracted from `CHANGELOG.md`.
+- `src/lib.rs` upgraded `#![warn(missing_docs)]` to `#![deny(missing_docs)]`.
 
 ## [0.1.0] - 2024-01-XX
 

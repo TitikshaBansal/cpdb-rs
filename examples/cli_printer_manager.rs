@@ -183,7 +183,7 @@ fn show_printer_media(name: &str) -> ExResult {
     }
     match printer.get_media_margins(&media) {
         Ok(margins) => {
-            for (i, m) in margins.0.iter().enumerate() {
+            for (i, m) in margins.entries.iter().enumerate() {
                 println!(
                     "margin[{i}]: top={}, bottom={}, left={}, right={}",
                     m.top, m.bottom, m.left, m.right

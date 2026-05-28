@@ -8,7 +8,7 @@
 //! type for job submission, options, and translations.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 
 pub mod callbacks;
 pub mod common;
@@ -25,5 +25,5 @@ pub use common::{init, version};
 pub use error::{CpdbError, Result};
 pub use frontend::Frontend;
 pub use options::{OptionInfo, OptionsCollection};
-pub use printer::{Margin, Margins, MediaSize, Printer};
+pub use printer::{Margin, Margins, MediaSize, Printer, TranslationMap};
 pub use settings::{Media, Options, Settings};

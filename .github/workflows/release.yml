@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify (Ubuntu)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config autoconf automake libtool libtool-bin gettext autopoint \
+            libglib2.0-dev libdbus-1-dev \
+            libcups2-dev cups \
+            libavahi-common-dev libavahi-client-dev
+
+      - name: Build and install cpdb-libs
+        run: |
+          git clone --depth=1 https://github.com/OpenPrinting/cpdb-libs.git ~/cpdb-libs
+          cd ~/cpdb-libs
+          ./autogen.sh || autoreconf -fi
+          ./configure --prefix=/usr
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        env:
+          LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
+        run: cargo test --all --verbose
+
+      - name: Verify tag matches Cargo.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.+)".*/\1/')
+          if [ "$tag" != "$crate" ]; then
+            echo "Tag $tag does not match Cargo.toml version $crate" >&2
+            exit 1
+          fi
+
+      - name: Cargo publish (dry run)
+        run: cargo publish --dry-run --verbose
+
+  release:
+    name: GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog section for this tag
+        id: notes
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # Pull the section between this version's heading and the next ## heading.
+          awk -v ver="$tag" '
+            BEGIN { capture = 0 }
+            /^## \[/ {
+              if (capture) exit
+              if ($0 ~ "\\[" ver "\\]" || $0 ~ "\\[Unreleased\\]") capture = 1
+              next
+            }
+            capture { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "No changelog entry found for v$tag" > release_notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

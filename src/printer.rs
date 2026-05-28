@@ -27,8 +27,10 @@ use crate::frontend::Frontend;
 use crate::options::OptionsCollection;
 use crate::util;
 use libc::c_char;
-use std::ffi::CString;
+use std::collections::HashMap;
+use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
 /// Page margins in hundredths of a millimetre.
@@ -46,7 +48,10 @@ pub struct Margin {
 
 /// One or more [`Margin`] entries returned by the backend for a media type.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Margins(pub Vec<Margin>);
+pub struct Margins {
+    /// Every margin set the backend reports for the queried media.
+    pub entries: Vec<Margin>,
+}
 
 /// Media dimensions in hundredths of a millimetre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +60,37 @@ pub struct MediaSize {
     pub width: i32,
     /// Length.
     pub length: i32,
+}
+
+/// An owned snapshot of a printer's translation table.
+///
+/// Built by walking `cpdb_printer_obj.translations` once and copying every
+/// `(key, value)` pair into Rust-owned `String`s. After construction the
+/// map holds no raw pointers and can be freely stored or sent across
+/// threads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TranslationMap {
+    /// The locale this map was captured for, when available.
+    pub locale: Option<String>,
+    /// Translation entries: source string → localised string.
+    pub entries: HashMap<String, String>,
+}
+
+impl TranslationMap {
+    /// `true` when no entries are present.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Number of entries in the map.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Looks up the translation for `key`.
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.entries.get(key).map(String::as_str)
+    }
 }
 
 /// A safe handle to a cpdb printer object.
@@ -440,7 +476,7 @@ impl<'frontend> Printer<'frontend> {
                 right: m.right,
             });
         }
-        Ok(Margins(out))
+        Ok(Margins { entries: out })
     }
 
     // ─── Translations ────────────────────────────────────────────────────────
@@ -544,6 +580,56 @@ impl<'frontend> Printer<'frontend> {
         // SAFETY: pointers are non-null.
         unsafe { ffi::cpdbGetAllTranslations(self.raw.as_ptr(), c_locale.as_ptr()) };
         Ok(())
+    }
+
+    /// Returns an owned snapshot of the printer's cached translation table.
+    ///
+    /// Call [`Printer::get_all_translations`] (or
+    /// [`Printer::acquire_translations_with`]) first to populate the table.
+    /// Returns an empty map when no translations have been loaded.
+    pub fn translations(&self) -> TranslationMap {
+        // SAFETY: dereferencing the printer struct's `locale` and
+        // `translations` fields is sound; we only read borrowed pointers.
+        let raw = self.raw.as_ptr();
+        let locale_ptr = unsafe { (*raw).locale };
+        let table = unsafe { (*raw).translations } as *mut glib_sys::GHashTable;
+
+        let locale = if locale_ptr.is_null() {
+            None
+        } else {
+            unsafe { util::cstr_to_string(locale_ptr) }.ok()
+        };
+
+        if table.is_null() {
+            return TranslationMap {
+                locale,
+                entries: HashMap::new(),
+            };
+        }
+
+        let mut entries: HashMap<String, String> = HashMap::new();
+        // SAFETY: iterator is initialised on the stack and iterated
+        // synchronously; we copy all data into owned Strings before
+        // returning. The table is not mutated during this loop.
+        unsafe {
+            let mut iter = MaybeUninit::<glib_sys::GHashTableIter>::uninit();
+            glib_sys::g_hash_table_iter_init(iter.as_mut_ptr(), table);
+            let mut iter = iter.assume_init();
+
+            let mut key: glib_sys::gpointer = std::ptr::null_mut();
+            let mut value: glib_sys::gpointer = std::ptr::null_mut();
+            while glib_sys::g_hash_table_iter_next(&mut iter, &mut key, &mut value) != 0 {
+                if key.is_null() || value.is_null() {
+                    continue;
+                }
+                let k = CStr::from_ptr(key as *const c_char).to_string_lossy().into_owned();
+                let v = CStr::from_ptr(value as *const c_char)
+                    .to_string_lossy()
+                    .into_owned();
+                entries.insert(k, v);
+            }
+        }
+        TranslationMap { locale, entries }
     }
 
     // ─── Persistence ─────────────────────────────────────────────────────────
