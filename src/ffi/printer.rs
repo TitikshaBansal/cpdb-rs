@@ -21,9 +21,9 @@
 //! multiple threads, wrap a single printer in a [`std::sync::Mutex`].
 
 use super::bindings as ffi;
+use super::callbacks::{self, AcquireCompletion};
 use super::frontend::Frontend;
 use super::util;
-use super::callbacks::{self, AcquireCompletion};
 use crate::error::{CpdbError, Result};
 use crate::options::OptionsCollection;
 use libc::c_char;

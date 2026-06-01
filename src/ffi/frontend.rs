@@ -12,8 +12,8 @@
 //! wrap the frontend in a [`std::sync::Mutex`].
 
 use super::bindings as ffi;
-use super::printer::Printer;
 use super::callbacks::{self, PrinterUpdate};
+use super::printer::Printer;
 use crate::error::{CpdbError, Result};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;

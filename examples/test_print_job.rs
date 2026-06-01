@@ -6,7 +6,6 @@ use cpdb_rs::{CpdbClient, CpdbError};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 
-
 /// Change this to target a different printer.
 const PRINTER_ID: &str = "dummy_printer";
 const BACKEND: &str = "CUPS";
@@ -52,14 +51,14 @@ showpage
     match client.print_fd(PRINTER_ID, BACKEND, &settings, title).await {
         Ok((job_id, fd)) => {
             println!("printFd SUCCESS: Job ID: {}", job_id);
-            
+
             // Convert the zbus OwnedFd into a std OwnedFd, then into a File to prevent double-drop
             let std_fd: std::os::fd::OwnedFd = fd.into();
             let mut file = std::fs::File::from(std_fd);
             use std::io::Write;
             file.write_all(postscript).expect("Failed to write to FD");
             drop(file); // Signals EOF
-            
+
             println!("Document written to FD and stream closed.");
         }
         Err(CpdbError::DbusError(zbus::Error::MethodError(name, _, _)))
@@ -71,7 +70,10 @@ showpage
                 .print_socket(PRINTER_ID, BACKEND, &settings, title)
                 .await?;
 
-            println!("printSocket SUCCESS: Job ID: {}, Socket: {}", job_id, socket_path);
+            println!(
+                "printSocket SUCCESS: Job ID: {}, Socket: {}",
+                job_id, socket_path
+            );
 
             let mut stream = UnixStream::connect(&socket_path)
                 .await
