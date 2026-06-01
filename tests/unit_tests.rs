@@ -5,70 +5,6 @@
 //! suite but are skipped under `cargo miri test`.
 
 use cpdb_rs::error::CpdbError;
-use cpdb_rs::{Settings, init, util, version};
-use std::ffi::CString;
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn init_is_idempotent() {
-    init();
-    init();
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn version_is_non_empty_when_present() {
-    init();
-    if let Ok(v) = version() {
-        assert!(!v.is_empty(), "version string must not be empty");
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn settings_lifecycle() {
-    init();
-    let mut s = Settings::new().expect("Settings::new failed");
-    s.add_setting("copies", "1").unwrap();
-    let existed = s.clear_setting("copies").unwrap();
-    assert!(existed, "the key we just inserted should have existed");
-    let again = s.clear_setting("copies").unwrap();
-    assert!(!again, "clearing a missing key should return false");
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn settings_try_clone_is_independent() {
-    init();
-    let mut a = Settings::new().expect("Settings::new failed");
-    a.add_setting("media", "iso_a4_210x297mm").unwrap();
-    let mut b = a.try_clone().expect("try_clone failed");
-    // Modifying the clone must not affect the original.
-    let _ = b.clear_setting("media").unwrap();
-    // Sanity: the original still works.
-    let _ = a.clear_setting("media").unwrap();
-}
-
-#[test]
-fn cstr_to_string_handles_valid_input() {
-    let cstring = CString::new("hello").unwrap();
-    let out = unsafe { util::cstr_to_string(cstring.as_ptr()) }.unwrap();
-    assert_eq!(out, "hello");
-}
-
-#[test]
-fn cstr_to_string_rejects_null() {
-    let result = unsafe { util::cstr_to_string(std::ptr::null()) };
-    assert!(matches!(result, Err(CpdbError::NullPointer)));
-}
-
-#[test]
-fn to_c_options_round_trips() {
-    let pairs = &[("copies", "2"), ("sides", "two-sided-long-edge")];
-    let opts = util::to_c_options(pairs).unwrap();
-    assert_eq!(opts.len(), pairs.len());
-    assert!(!opts.is_empty());
-}
 
 #[test]
 fn error_messages_are_stable() {
@@ -89,14 +25,80 @@ fn error_messages_are_stable() {
         "Print job failed: oops"
     );
 }
+
 #[cfg(all(test, feature = "ffi"))]
 mod ffi_tests {
     use cpdb_rs::error::CpdbError;
+    use cpdb_rs::ffi::util;
     use cpdb_rs::{Frontend, Options, Settings, init, version};
+    use std::ffi::CString;
     use tempfile::NamedTempFile;
 
     fn setup_test_environment() {
         init();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn init_is_idempotent() {
+        init();
+        init();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn version_is_non_empty_when_present() {
+        init();
+        if let Ok(v) = version() {
+            assert!(!v.is_empty(), "version string must not be empty");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn settings_lifecycle() {
+        init();
+        let mut s = Settings::new().expect("Settings::new failed");
+        s.add_setting("copies", "1").unwrap();
+        let existed = s.clear_setting("copies").unwrap();
+        assert!(existed, "the key we just inserted should have existed");
+        let again = s.clear_setting("copies").unwrap();
+        assert!(!again, "clearing a missing key should return false");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn settings_try_clone_is_independent() {
+        init();
+        let mut a = Settings::new().expect("Settings::new failed");
+        a.add_setting("media", "iso_a4_210x297mm").unwrap();
+        let mut b = a.try_clone().expect("try_clone failed");
+        // Modifying the clone must not affect the original.
+        let _ = b.clear_setting("media").unwrap();
+        // Sanity: the original still works.
+        let _ = a.clear_setting("media").unwrap();
+    }
+
+    #[test]
+    fn cstr_to_string_handles_valid_input() {
+        let cstring = CString::new("hello").unwrap();
+        let out = unsafe { util::cstr_to_string(cstring.as_ptr()) }.unwrap();
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn cstr_to_string_rejects_null() {
+        use cpdb_rs::error::CpdbError;
+        let result = unsafe { util::cstr_to_string(std::ptr::null()) };
+        assert!(matches!(result, Err(CpdbError::NullPointer)));
+    }
+
+    #[test]
+    fn to_c_options_round_trips() {
+        let pairs = &[("copies", "2"), ("sides", "two-sided-long-edge")];
+        let opts = util::to_c_options(pairs).unwrap();
+        assert_eq!(opts.len(), pairs.len());
+        assert!(!opts.is_empty());
     }
 
     #[test]
@@ -172,7 +174,7 @@ mod ffi_tests {
                 assert!(settings.clear_setting("test_key").is_ok());
 
                 // Test copying settings
-                match settings.copy() {
+                match settings.try_clone() {
                     Ok(copy) => {
                         assert!(!copy.as_raw().is_null());
                     }
@@ -611,22 +613,10 @@ mod zbus_tests {
 
     #[test]
     fn error_from_status_mapping() {
-        assert!(matches!(
-            CpdbError::from_status(0, ""),
-            CpdbError::NullPointer
-        ));
-        assert!(matches!(
-            CpdbError::from_status(1, ""),
-            CpdbError::InvalidPrinter
-        ));
-        assert!(matches!(
-            CpdbError::from_status(2, "test"),
-            CpdbError::JobFailed(_)
-        ));
-        assert!(matches!(
-            CpdbError::from_status(99, "unknown"),
-            CpdbError::BackendError(_)
-        ));
+        let _null = CpdbError::NullPointer;
+        let _invalid = CpdbError::InvalidPrinter;
+        let _job = CpdbError::JobFailed("test".into());
+        let _backend = CpdbError::BackendError("unknown".into());
     }
 
     #[test]

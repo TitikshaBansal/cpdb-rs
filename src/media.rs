@@ -3,24 +3,36 @@
 #[cfg(feature = "zbus-backend")]
 use crate::proxy::RawMedia;
 
+/// Margin values for a paper size, in hundredths of a millimetre.
 #[derive(Debug, Clone)]
 pub struct MarginInfo {
+    /// Left margin.
     pub left: i32,
+    /// Right margin.
     pub right: i32,
+    /// Top margin.
     pub top: i32,
+    /// Bottom margin.
     pub bottom: i32,
 }
 
+/// A single supported paper size with its dimensions and available margins.
 #[derive(Debug, Clone)]
 pub struct MediaInfo {
+    /// The media name (e.g. `"iso_a4_210x297mm"`).
     pub name: String,
+    /// Width in hundredths of a millimetre.
     pub width: i32,
+    /// Length in hundredths of a millimetre.
     pub length: i32,
+    /// Available margin configurations for this media.
     pub margins: Vec<MarginInfo>,
 }
 
+/// An owned collection of all paper sizes supported by a printer.
 #[derive(Debug, Clone, Default)]
 pub struct MediaCollection {
+    /// All supported media entries.
     pub media: Vec<MediaInfo>,
 }
 

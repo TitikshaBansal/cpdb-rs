@@ -9,12 +9,21 @@ pub enum DiscoveryEvent {
     /// A printer was discovered or re-announced.
     PrinterAdded(PrinterSnapshot),
     /// A printer was removed from the backend.
-    PrinterRemoved { id: String, backend: String },
+    PrinterRemoved {
+        /// The printer's unique ID.
+        id: String,
+        /// The backend that reported the removal.
+        backend: String,
+    },
     /// A printer's state or accepting-jobs status changed.
     PrinterStateChanged {
+        /// The printer's unique ID.
         id: String,
+        /// The backend that reported the change.
         backend: String,
+        /// The new state string.
         state: String,
+        /// Whether the printer is accepting new jobs.
         accepting_jobs: bool,
     },
 }
@@ -22,17 +31,26 @@ pub enum DiscoveryEvent {
 /// Snapshot of a printer's identity and status at a point in time.
 #[derive(Debug, Clone)]
 pub struct PrinterSnapshot {
+    /// The backend-assigned unique printer ID.
     pub id: String,
+    /// The human-readable display name.
     pub name: String,
+    /// A free-form description of the printer.
     pub info: String,
+    /// Physical location string as reported by the backend.
     pub location: String,
+    /// Make and model string (e.g. `"HP LaserJet Pro"`).
     pub make_model: String,
+    /// Current state string (e.g. `"idle"`, `"processing"`, `"stopped"`).
     pub state: String,
+    /// Whether the printer is currently accepting new jobs.
     pub accepting_jobs: bool,
+    /// The backend that owns this printer (e.g. `"CUPS"`).
     pub backend: String,
 }
 
 impl PrinterSnapshot {
+    /// Returns `true` when the printer is idle and accepting jobs.
     pub fn is_ready(&self) -> bool {
         self.state == "idle" && self.accepting_jobs
     }

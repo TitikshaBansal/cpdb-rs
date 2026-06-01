@@ -4,7 +4,7 @@
 use super::bindings as ffi;
 use super::util;
 use crate::error::{CpdbError, Result};
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 /// Returns the version of the linked cpdb-libs C library.
 pub fn version() -> Result<String> {

@@ -231,10 +231,10 @@ impl<'frontend> Printer<'frontend> {
     /// The returned string is owned by Rust; the cpdb-libs allocation is
     /// freed inside this call.
     pub fn get_updated_state(&self) -> Result<String> {
-        // SAFETY: cpdbGetState returns a freshly `g_strdup`'d string we own.
+        // SAFETY: cpdbGetState returns a borrowed string owned by the printer object.
         unsafe {
             let raw = ffi::cpdbGetState(self.raw.as_ptr());
-            util::cstr_to_string_and_g_free(raw)
+            util::cstr_to_string(raw)
         }
     }
 
@@ -482,7 +482,7 @@ impl<'frontend> Printer<'frontend> {
                     "cpdbGetAllOptions returned null — call acquire_details() first".into(),
                 )
             })?;
-            Ok(OptionsCollection::from_raw(opts))
+            OptionsCollection::from_raw(opts.as_ptr())
         }
     }
 
@@ -600,7 +600,6 @@ impl<'frontend> Printer<'frontend> {
                 None,
                 std::ptr::null_mut(),
             );
-            ffi::cpdbAcquireTranslations(self.raw, c_locale.as_ptr(), None, std::ptr::null_mut());
         }
         Ok(())
     }

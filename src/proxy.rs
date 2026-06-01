@@ -4,6 +4,10 @@
 //! for complex return types. Consumers should use [`crate::client::CpdbClient`]
 //! instead of this proxy directly.
 
+// The `#[proxy]` macro generates internal struct fields and service methods
+// that cannot be given doc comments directly.
+#![allow(missing_docs)]
+
 use serde::{Deserialize, Serialize};
 use zbus::proxy;
 use zbus::zvariant::Type;
@@ -11,19 +15,28 @@ use zbus::zvariant::Type;
 /// A printer option from `GetAllOptions`. D-Bus signature: `(sssia(s))`.
 #[derive(Debug, Clone, Deserialize, Serialize, Type)]
 pub struct RawOption {
+    /// The option name (e.g. `"sides"`, `"copies"`).
     pub option_name: String,
+    /// The option group name (e.g. `"General"`).
     pub group_name: String,
+    /// The default value string.
     pub default_value: String,
+    /// Number of supported values.
     pub num_supported: i32,
+    /// The list of supported values as 1-tuples (D-Bus encoding).
     pub supported_values: Vec<(String,)>,
 }
 
 /// Print margins in hundredths of a millimetre. D-Bus signature: `(iiii)`.
 #[derive(Debug, Clone, Deserialize, Serialize, Type)]
 pub struct RawMargin {
+    /// Left margin in hundredths of a mm.
     pub left: i32,
+    /// Right margin in hundredths of a mm.
     pub right: i32,
+    /// Top margin in hundredths of a mm.
     pub top: i32,
+    /// Bottom margin in hundredths of a mm.
     pub bottom: i32,
 }
 
@@ -32,13 +45,19 @@ pub struct RawMargin {
 /// Width and length are in hundredths of a millimetre.
 #[derive(Debug, Clone, Deserialize, Serialize, Type)]
 pub struct RawMedia {
+    /// The media name (e.g. `"iso_a4_210x297mm"`).
     pub name: String,
+    /// Width in hundredths of a mm.
     pub width: i32,
+    /// Length in hundredths of a mm.
     pub length: i32,
+    /// Number of margin entries.
     pub num_margins: i32,
+    /// Available margin configurations.
     pub margins: Vec<RawMargin>,
 }
 
+#[allow(missing_docs)]
 /// Low-level proxy for `org.openprinting.PrintBackend`.
 ///
 /// Prefer [`CpdbClient`](crate::client::CpdbClient) for high-level usage.

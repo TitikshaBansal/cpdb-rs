@@ -18,7 +18,6 @@ use crate::error::{CpdbError, Result};
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
-use std::ptr;
 
 /// Safe wrapper around `cpdb_frontend_obj_t`.
 pub struct Frontend {
