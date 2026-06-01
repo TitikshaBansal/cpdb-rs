@@ -71,15 +71,6 @@ jobs:
         # catch crashes and leaks, not to assert printer counts.
         run: dbus-launch --exit-with-session cargo test --test integration -- --ignored --nocapture
 
-      - name: D-Bus smoke test (ignored integration tests)
-        env:
-          LD_LIBRARY_PATH: /usr/lib:/usr/local/lib
-        # `dbus-launch` spins up an ephemeral session bus for the cargo
-        # invocation. No printers are configured in CI, so the smoke test
-        # exercises init/connect/discover/teardown only — its job is to
-        # catch crashes and leaks, not to assert printer counts.
-        run: dbus-launch --exit-with-session cargo test --test integration -- --ignored --nocapture
-
       - name: Build examples
         run: cargo build --examples --all-features --verbose
 
