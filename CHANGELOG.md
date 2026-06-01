@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `CpdbClient`: The new main entrypoint for the async native D-Bus client.
+- `CpdbClient::get_all_printers`: Fetches a snapshot of all active printers across all discovered backends.
+- `CpdbClient::get_printer_details`: Fetches options and media sizes for a specific printer.
+- `CpdbClient::discovery_stream`: Exposes a native `Stream` of `DiscoveryEvent`s (`PrinterAdded`, `PrinterRemoved`, `PrinterStateChanged`) for live discovery.
+- `CpdbClient::keep_alive_all`: Helper method to ping all connected backends and prevent them from auto-exiting due to inactivity timeouts.
 - `Frontend::new_with_observer<F: FnMut(&Printer, PrinterUpdate) + Send + 'static>` —
   closure-based registration for the `cpdb_printer_callback`. Backed by a
   process-global pointer-keyed registry and unregistered automatically when
@@ -101,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 
+- Native Rust D-Bus Client: Completely rewrote the crate to use native Rust D-Bus bindings via `zbus`, dropping the dependency on the `cpdb-libs` C library for the primary API.
+- Async API: All frontend APIs are now fully asynchronous and powered by `tokio`.
+- Legacy FFI: The old C-FFI bindings are still available but have been moved behind the optional `ffi` feature flag.
 - `build.rs` now prefers `pkg-config` over the hard-coded fallback path
   list, drops the architecture-specific `/usr/lib/x86_64-linux-gnu` guess,
   and emits a `cargo:warning` when neither pkg-config nor `CPDB_LIBS_PATH`

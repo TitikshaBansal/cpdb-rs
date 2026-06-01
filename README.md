@@ -4,80 +4,63 @@
 [![Documentation](https://docs.rs/cpdb-rs/badge.svg)](https://docs.rs/cpdb-rs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Safe Rust bindings for the Common Print Dialog Backends
-([`cpdb-libs`](https://github.com/OpenPrinting/cpdb-libs)) library from
-OpenPrinting.
+Safe, native Rust async bindings for the Common Print Dialog Backends ([CPDB](https://github.com/OpenPrinting/cpdb-libs)) D-Bus interface.
 
 ## Overview
 
-cpdb-rs lets Rust applications drive cpdb-libs over D-Bus: discover
-printers, inspect their options and translations, and submit print jobs.
-The crate is built around safe owning/borrowing types and `Result`-based
-error handling on top of bindgen-generated FFI.
+cpdb-rs lets Rust applications communicate with CPDB print backends (like `cpdb-backend-cups`) directly over D-Bus without requiring any C dependencies.
+
+The library uses [`zbus`](https://crates.io/crates/zbus) and [`tokio`](https://crates.io/crates/tokio) to provide a fully asynchronous, memory-safe, and pure-Rust implementation of the CPDB client protocol.
 
 ## Features
 
-- **Printer discovery** over D-Bus
-- **Job submission** with per-job options and titles
-- **Settings management** — global (`Settings`) and per-printer
-- **Option & translation lookup**, including localised labels
-- **Media information** — sizes and per-media margin tables
-- **Memory-safe** — owned/borrowed split enforced by lifetimes
-- **Linux-first**; macOS supports a headers-only verification build
+- **Pure Rust D-Bus Client:** No `libcpdb-dev` or C compiler needed! Everything runs natively over D-Bus using `zbus`.
+- **Async First:** All methods are `async` and powered by Tokio.
+- **Live Discovery:** Subscribe to a native Rust `Stream` for real-time printer additions, removals, and state changes.
+- **Robust Auto-Retry:** Handles D-Bus activation race conditions automatically.
+- **Keep-Alive Management:** Automatically pings backends to keep them active in the background.
+- *(Optional)* **Legacy C-FFI bindings** available via the `ffi` feature flag.
 
 ## Prerequisites
 
-### System dependencies
+Because `cpdb-rs` communicates directly over D-Bus, you do not need to install the `cpdb-libs` C development headers to build this project.
 
-Install the cpdb-libs C library and GLib headers.
+However, your system must have CPDB backends installed to actually discover any printers:
 
 ```bash
 # Debian / Ubuntu
-sudo apt-get install libcpdb-dev libglib2.0-dev
+sudo apt-get install cpdb-backend-cups
 
 # Fedora / RHEL / CentOS
-sudo dnf install cpdb-libs-devel glib2-devel
+sudo dnf install cpdb-backend-cups
 ```
-
-Building from source:
-
-```bash
-git clone https://github.com/OpenPrinting/cpdb-libs.git
-cd cpdb-libs
-./autogen.sh
-./configure --prefix=/usr
-make -j"$(nproc)"
-sudo make install
-sudo ldconfig
-```
-
-### Rust
-
-Rust 1.85+ (2024 edition) is required.
 
 ## Installation
 
 ```toml
 [dependencies]
 cpdb-rs = "0.1.0"
+tokio = { version = "1.0", features = ["full"] }
 ```
 
 ## Quick start
 
 ```rust
-use cpdb_rs::{Frontend, init};
+use cpdb_rs::CpdbClient;
 
-fn main() -> cpdb_rs::Result<()> {
-    init();
+#[tokio::main]
+async fn main() -> cpdb_rs::Result<()> {
+    // Connect to D-Bus and auto-activate available CPDB backends
+    let client = CpdbClient::new().await?;
+    println!("Connected to {} backend(s).\n", client.backend_count());
 
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    for printer in frontend.get_printers()? {
-        println!("Printer: {}", printer.name()?);
-        println!("  Backend: {}", printer.backend_name()?);
-        println!("  State:   {}", printer.get_updated_state()?);
-        println!("  Accepts: {}", printer.is_accepting_jobs()?);
+    // Retrieve all active printers
+    let printers = client.get_all_printers().await?;
+    for p in &printers {
+        println!("Printer: {} (ID: {})", p.name, p.id);
+        println!("  Make & Model: {}", p.make_model);
+        println!("  State: {}", p.state);
+        println!("  Accepts Jobs: {}", p.accepting_jobs);
     }
 
     Ok(())
@@ -86,154 +69,92 @@ fn main() -> cpdb_rs::Result<()> {
 
 ## Examples
 
-### Printer discovery
+### Fetching Printer Options and Media Sizes
 
 ```rust
-use cpdb_rs::{Frontend, init};
+use cpdb_rs::CpdbClient;
 
-fn list_printers() -> cpdb_rs::Result<()> {
-    init();
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-    for printer in frontend.get_printers()? {
-        println!("Name: {}", printer.name()?);
-        println!("Location: {}", printer.location()?);
-        println!("Description: {}", printer.description()?);
-        println!("Make & Model: {}", printer.make_and_model()?);
-    }
-    Ok(())
-}
-```
+#[tokio::main]
+async fn main() -> cpdb_rs::Result<()> {
+    let client = CpdbClient::new().await?;
+    let printers = client.get_all_printers().await?;
 
-### Observing printer events
+    if let Some(p) = printers.first() {
+        // Fetch specific details using the printer's ID and backend name
+        let (options, media) = client.get_printer_details(&p.id, &p.backend).await?;
 
-```rust
-use cpdb_rs::{Frontend, PrinterUpdate, init};
-use std::time::Duration;
-
-fn watch() -> cpdb_rs::Result<()> {
-    init();
-    let frontend = Frontend::new_with_observer(|printer, update| {
-        let name = printer.name().unwrap_or_default();
-        match update {
-            PrinterUpdate::Added       => println!("+ {name}"),
-            PrinterUpdate::Removed     => println!("- {name}"),
-            PrinterUpdate::StateChanged => println!("~ {name}"),
+        println!("Options for {}:", p.name);
+        for opt in options {
+            println!("  {}: default='{}', choices=[{}]", 
+                opt.name, opt.default_value, opt.supported_values.join(", "));
         }
-    })?;
-    frontend.connect_to_dbus()?;
-    // Keep the frontend alive while the D-Bus thread delivers events.
-    std::thread::sleep(Duration::from_secs(30));
-    Ok(())
-}
-```
-
-### Looking up a specific printer
-
-```rust
-use cpdb_rs::{Frontend, init};
-
-fn find_one() -> cpdb_rs::Result<()> {
-    init();
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    // By (id, backend) — the canonical lookup; O(1) inside cpdb-libs.
-    let p = frontend.find_printer("HP_LaserJet_4", "CUPS")?;
-    println!("found {} on {}", p.name()?, p.backend_name()?);
-    Ok(())
-}
-```
-
-### Print job submission
-
-```rust
-use cpdb_rs::{Frontend, init};
-
-fn submit(printer_name: &str, file_path: &str) -> cpdb_rs::Result<()> {
-    init();
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let printer = frontend.get_printer(printer_name)?;
-
-    // No-options print.
-    let job_id = printer.print_file(file_path)?;
-    println!("job: {job_id}");
-
-    // With options and a title — options are applied to the printer's
-    // setting table before submission.
-    let job_id = printer.submit_job(
-        file_path,
-        &[("copies", "2"), ("sides", "two-sided-long-edge")],
-        "My Job",
-    )?;
-    println!("job: {job_id}");
-    Ok(())
-}
-```
-
-### Settings persistence
-
-```rust
-use cpdb_rs::{Settings, init};
-
-fn manage() -> cpdb_rs::Result<()> {
-    init();
-    let mut s = Settings::new()?;
-    s.add_setting("copies", "1")?;
-    s.add_setting("orientation-requested", "portrait")?;
-    s.add_setting("media", "A4")?;
-
-    // Persists to the cpdb-managed user config directory.
-    s.save_to_disk()?;
-    let _loaded = Settings::read_from_disk()?;
-    Ok(())
-}
-```
-
-### Options and translations
-
-```rust
-use cpdb_rs::{Frontend, init};
-
-fn details(printer_name: &str) -> cpdb_rs::Result<()> {
-    init();
-    let frontend = Frontend::new()?;
-    frontend.connect_to_dbus()?;
-
-    let p = frontend.get_printer(printer_name)?;
-
-    println!("default copies:  {:?}", p.get_default("copies")?);
-    println!("current quality: {:?}", p.get_current("print-quality")?);
-
-    let size = p.get_media_size("iso_a4_210x297mm")?;
-    println!("A4: {} x {} (1/100 mm)", size.width, size.length);
-
-    if let Some(label) = p.get_option_translation("copies", "en_US")? {
-        println!("option label: {label}");
-    }
-    if let Some(label) = p.get_choice_translation("sides", "two-sided-long-edge", "en_US")? {
-        println!("choice label: {label}");
     }
     Ok(())
 }
 ```
 
-## CLI examples
+### Live Discovery Event Stream
+
+Watch for new printers appearing and disappearing in real-time.
+
+```rust
+use cpdb_rs::{CpdbClient, DiscoveryEvent};
+use futures_util::StreamExt;
+
+#[tokio::main]
+async fn main() -> cpdb_rs::Result<()> {
+    let client = CpdbClient::new().await?;
+    
+    // Spawn a background task to keep the backends from automatically
+    // timing out and exiting after 30 seconds of inactivity.
+    let keep_alive_client = client.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            keep_alive_client.keep_alive_all().await;
+        }
+    });
+
+    let mut stream = client.discovery_stream().await?;
+    println!("Listening for printer changes...");
+
+    while let Some(event) = stream.next().await {
+        match event {
+            DiscoveryEvent::PrinterAdded(snap) => {
+                println!("+ Added: {} ({})", snap.name, snap.backend);
+            }
+            DiscoveryEvent::PrinterRemoved { id, backend } => {
+                println!("- Removed: {} ({})", id, backend);
+            }
+            DiscoveryEvent::PrinterStateChanged { id, state, accepting_jobs, .. } => {
+                println!("~ State Changed: {} is now {} (accepting={})", id, state, accepting_jobs);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+You can run the full interactive test example using:
 
 ```bash
-# Basic usage — list printers, check version, submit a tiny file
-cargo run --example basic_usage
-
-# Interactive CLI — list, inspect, configure printers
-cargo run --example cli_printer_manager
-
-# Full cpdb-text-frontend port — every cpdb-rs API exercised
-cargo run --example cpdb-text-frontend
+cargo run --example zbus_test
 ```
 
-## Architecture
+## Architecture (zbus Backend)
+
+Instead of linking against `libcpdb.so` and using `bindgen` (which required unsafe C memory management, callbacks, and manual lifetime tracking), `cpdb-rs` now uses `zbus` to speak the D-Bus protocol directly to the print backends. This provides massive benefits:
+
+- **100% Safe Rust:** No raw pointers, no manual memory management, no undefined behavior.
+- **Zero C Dependencies:** You don't need `libcpdb-dev` to compile.
+- **Async Tokio Integration:** `zbus` integrates perfectly with Tokio, allowing you to await D-Bus calls and use Rust `Stream`s for live discovery events.
+- **Startup Stability:** Implements internal retry loops to gracefully handle `UnknownMethod` race conditions when systemd auto-activates D-Bus backends.
+
+## Legacy Architecture (C-FFI)
+
+If you have legacy code that still requires the synchronous C-FFI wrappers around `cpdb-libs`, they are still available by enabling the `ffi` feature flag in your `Cargo.toml`. See the `ffi` module documentation for details.
 
 ```
             ┌───────────────────────────────────────────┐
@@ -268,7 +189,7 @@ cargo run --example cpdb-text-frontend
                    ~/.config/cpdb/ (cpdb-libs-managed location)
 ```
 
-### Two `add_setting` methods, two scopes
+### Two `add_setting` methods, two scopes (C-FFI)
 
 | Method                    | Scope                                              | Persists across runs?               |
 |---------------------------|----------------------------------------------------|-------------------------------------|
@@ -283,18 +204,22 @@ serialisable view that cpdb-libs reads back from disk on startup.
 
 | Module                | What lives here                                                     |
 |-----------------------|----------------------------------------------------------------------|
-| `cpdb_rs::frontend`   | `Frontend` — D-Bus lifecycle, printer discovery, default printer    |
-| `cpdb_rs::printer`    | `Printer`, `Margin/Margins`, `MediaSize`, `TranslationMap`,         |
-|                       | `PrintFdHandle`, `PrintSocketHandle`                                |
-| `cpdb_rs::settings`   | `Settings`, `Options`, `Media`                                      |
-| `cpdb_rs::options`    | `OptionInfo`, `OptionsCollection` (owned snapshot of cpdb_options_t)|
-| `cpdb_rs::callbacks`  | Closure trampolines + `PrinterUpdate` enum                          |
-| `cpdb_rs::common`     | `init`, `version`, path/config helpers                              |
+| `cpdb_rs::client`     | **(zbus)** `CpdbClient` — Main async D-Bus client & discovery logic |
+| `cpdb_rs::events`     | **(zbus)** `DiscoveryEvent`, `PrinterSnapshot` for async streams    |
+| `cpdb_rs::media`      | **(zbus)** `MediaCollection`, `MediaInfo`, `MarginInfo`             |
+| `cpdb_rs::config`     | **(zbus)** `PrinterConfig` for job submission configuration         |
+| `cpdb_rs::options`    | `OptionInfo`, `OptionsCollection` (shared across both implementations)|
 | `cpdb_rs::error`      | `CpdbError` and the crate-wide `Result` alias                       |
-| `cpdb_rs::util`       | Internal `CStr` helpers + the `COptions` C-array builder            |
-| `cpdb_rs::ffi`        | Raw bindgen output; everything `unsafe`                             |
+| `cpdb_rs::proxy`      | **(zbus)** Auto-generated zbus proxy trait `PrintBackend`           |
+| `cpdb_rs::frontend`   | *(ffi)* `Frontend` — D-Bus lifecycle, discovery, default printer    |
+| `cpdb_rs::printer`    | *(ffi)* `Printer`, `Margin/Margins`, `MediaSize`, `TranslationMap`  |
+| `cpdb_rs::settings`   | *(ffi)* `Settings`, `Options`, `Media`                              |
+| `cpdb_rs::callbacks`  | *(ffi)* Closure trampolines + `PrinterUpdate` enum                  |
+| `cpdb_rs::common`     | *(ffi)* `init`, `version`, path/config helpers                      |
+| `cpdb_rs::util`       | *(ffi)* Internal `CStr` helpers + the `COptions` C-array builder    |
+| `cpdb_rs::ffi`        | *(ffi)* Raw bindgen output; everything `unsafe`                     |
 
-## Ownership model
+## Ownership model (C-FFI)
 
 `Printer` carries a lifetime tied to the `Frontend` it came from. Borrowed
 printers (those returned by `get_printers`, `get_printer`, `find_printer`,
