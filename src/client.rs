@@ -55,7 +55,7 @@ use crate::proxy::PrintBackendProxy;
 /// ```
 #[derive(Clone)]
 pub struct CpdbClient {
-    connection: zbus::Connection,
+    _connection: zbus::Connection,
     backends: Vec<BackendHandle>,
 }
 
@@ -122,7 +122,7 @@ impl CpdbClient {
         }
 
         Ok(Self {
-            connection,
+            _connection: connection,
             backends,
         })
     }
@@ -152,7 +152,18 @@ impl CpdbClient {
         for bh in &self.backends {
             // GetAllPrinters returns (i32, Vec<(OwnedValue,)>)
             // Each OwnedValue is a variant wrapping (sssssbss)
-            let result = bh.proxy.get_all_printers().await;
+            let mut result = bh.proxy.get_all_printers().await;
+
+            // The backend process may have claimed the well-known D-Bus name before
+            // it finished registering its object path `/`.
+            // If we get an `UnknownMethod` error on the very first call, wait and retry.
+            if let Err(zbus::Error::MethodError(ref name, _, _)) = result {
+                if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod" {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    result = bh.proxy.get_all_printers().await;
+                }
+            }
+
             let (_count, raw_printers) = match result {
                 Ok(v) => v,
                 Err(e) => {
@@ -280,6 +291,18 @@ impl CpdbClient {
         }
 
         Ok(all)
+    }
+
+    /// Keeps all backends alive to prevent them from auto-exiting.
+    ///
+    /// CPDB backends automatically exit after a period of inactivity (typically 30 seconds).
+    /// If you are listening to a `discovery_stream()`, you should call this method
+    /// periodically (e.g. every 10 seconds) to ensure the backends stay running
+    /// and continue emitting discovery signals.
+    pub async fn keep_alive_all(&self) {
+        for bh in &self.backends {
+            let _ = bh.proxy.keep_alive().await;
+        }
     }
 
     /// Fetches all options and media for a printer in a D-Bus call.

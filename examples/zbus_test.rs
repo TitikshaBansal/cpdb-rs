@@ -21,8 +21,15 @@ async fn main() -> cpdb_rs::Result<()> {
 
     // Default printer
     match client.get_default_printer("CUPS").await {
-        Ok(default) => println!("\nDefault CUPS printer: {default}"),
-        Err(e) => eprintln!("\nNo default printer: {e}"),
+        Ok(default) => {
+            let display = if default.is_empty() || default == "[Invalid UTF-8]" || default == "NA" {
+                "Not Set"
+            } else {
+                &default
+            };
+            println!("\nDefault CUPS printer: {display}");
+        }
+        Err(_) => println!("\nDefault CUPS printer: Not Set"),
     }
 
     // Fetch details for the first accepting printer
@@ -62,6 +69,16 @@ async fn main() -> cpdb_rs::Result<()> {
         "(Try: sudo lpadmin -p TestPrinter -E -v ipp://localhost/printers/test -m everywhere)"
     );
     println!("(Press Ctrl+C to stop)\n");
+
+    // Spawn a background task to keep backends alive
+    let keep_alive_client = client.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            keep_alive_client.keep_alive_all().await;
+        }
+    });
 
     let mut stream = client.discovery_stream().await?;
     while let Some(event) = stream.next().await {
