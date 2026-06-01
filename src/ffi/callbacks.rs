@@ -15,7 +15,7 @@
 //! panic does not unwind across the FFI boundary (which is UB).
 
 use crate::ffi;
-use crate::printer::Printer;
+use crate::ffi::printer::Printer;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, OnceLock};

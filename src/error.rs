@@ -54,6 +54,20 @@ pub enum CpdbError {
     /// An I/O error bubbled up from std::io.
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+    /// An unexpected status code was returned.
+    #[error("Invalid status code: {0}")]
+    InvalidStatus(i32),
+    /// The requested operation is not supported.
+    #[error("Unsupported operation")]
+    Unsupported,
+    /// A D-Bus protocol error occurred.
+    #[cfg(feature = "zbus-backend")]
+    #[error("D-Bus error: {0}")]
+    DbusError(#[from] zbus::Error),
+    /// A D-Bus FDO standard error occurred.
+    #[cfg(feature = "zbus-backend")]
+    #[error("D-Bus FDO error: {0}")]
+    FdoError(#[from] zbus::fdo::Error),
 }
 
 /// Shorthand `Result` alias used throughout the crate.

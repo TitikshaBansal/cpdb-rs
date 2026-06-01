@@ -1,13 +1,18 @@
-//! Owned, value-type snapshots of a printer's options.
+//! Printer options (capabilities) returned by `GetAllOptions`.
 //!
-//! These types decouple Rust code from the lifetime of a `cpdb_options_t`
-//! by copying every field into owned Rust storage at construction.
+//! [`OptionsCollection`] provides an owned, framework-agnostic snapshot
+//! of a printer's supported settings (copies, duplex, color mode, etc.).
 
-use crate::ffi;
-use crate::util;
+#[cfg(feature = "ffi")]
+use crate::error::{CpdbError, Result};
+#[cfg(feature = "ffi")]
+use crate::ffi::bindings as ffi;
+#[cfg(feature = "ffi")]
+use crate::ffi::util;
+#[cfg(feature = "ffi")]
 use glib_sys::{GHashTableIter, g_hash_table_iter_init, g_hash_table_iter_next};
+#[cfg(feature = "ffi")]
 use std::mem::MaybeUninit;
-use std::ptr::NonNull;
 
 /// A single printer option with its supported choices.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,9 +29,25 @@ pub struct OptionInfo {
 
 /// An owned snapshot of every option in a `cpdb_options_t`.
 ///
-/// Built by iterating `cpdb_options_t.table` once and copying every field
-/// into Rust-owned `String`s. After construction the collection holds no
-/// raw pointers and can be freely stored, cloned, or sent across threads.
+/// Built from D-Bus `GetAllOptions` responses (zbus backend) or from
+/// C `cpdb_options_t` pointers (FFI backend). After construction, no raw
+/// pointers are held - the collection is freely movable and cloneable.
+///
+/// # Example
+///
+/// ```rust
+/// use cpdb_rs::options::{OptionsCollection, OptionInfo};
+///
+/// let col = OptionsCollection {
+///     options: vec![OptionInfo {
+///         name: "copies".to_string(),
+///         default_value: "1".to_string(),
+///         group: "General".to_string(),
+///         supported_values: vec!["1".to_string(), "2".to_string()],
+///     }],
+/// };
+/// assert_eq!(col.get("copies").unwrap().default_value, "1");
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct OptionsCollection {
     /// Every option discovered, in iteration order of the underlying
@@ -41,14 +62,20 @@ impl OptionsCollection {
     /// after it returns the pointer is no longer accessed.
     ///
     /// # Safety
-    /// `raw` must point at a fully initialised `cpdb_options_t` whose
-    /// `table` field is null or a valid `GHashTable*` of
-    /// `*mut cpdb_option_t` values.
-    pub unsafe fn from_raw(raw: NonNull<ffi::cpdb_options_t>) -> Self {
-        // SAFETY: caller guarantees `raw` is valid.
-        let table = unsafe { (*raw.as_ptr()).table };
+    ///
+    /// `raw` must be either null or a valid pointer to a fully initialised
+    /// `cpdb_options_t` whose `table` field is a valid `GHashTable*`.
+    #[cfg(feature = "ffi")]
+    pub unsafe fn from_raw(raw: *mut ffi::cpdb_options_t) -> Result<Self> {
+        if raw.is_null() {
+            return Err(CpdbError::NullPointer);
+        }
+
+        // SAFETY: raw is non-null and caller guarantees validity.
+        let table = unsafe { (*raw).table };
+
         if table.is_null() {
-            return Self::default();
+            return Ok(Self::default());
         }
 
         let mut options: Vec<OptionInfo> = Vec::new();
@@ -70,75 +97,97 @@ impl OptionsCollection {
                     continue;
                 }
                 let opt = value as *mut ffi::cpdb_option_t;
-                options.push(option_info_from_raw(opt));
+
+                // Copy each field into an owned String. Null fields become
+                // empty strings so callers never need to check for None.
+                let name = util::cstr_to_string((*opt).option_name).unwrap_or_default();
+                let default_value = util::cstr_to_string((*opt).default_value).unwrap_or_default();
+                let group = util::cstr_to_string((*opt).group_name).unwrap_or_default();
+
+                // supported_values is a char** array of length num_supported.
+                let mut supported_values: Vec<String> =
+                    Vec::with_capacity((*opt).num_supported as usize);
+
+                if !(*opt).supported_values.is_null() && (*opt).num_supported > 0 {
+                    for i in 0..((*opt).num_supported as usize) {
+                        let s_ptr = *(*opt).supported_values.add(i);
+                        if !s_ptr.is_null() {
+                            if let Ok(s) = util::cstr_to_string(s_ptr) {
+                                supported_values.push(s);
+                            }
+                        }
+                    }
+                }
+
+                options.push(OptionInfo {
+                    name,
+                    default_value,
+                    group,
+                    supported_values,
+                });
             }
         }
 
+        Ok(Self { options })
+    }
+
+    /// Builds an `OptionsCollection` from the D-Bus response tuples returned
+    /// by [`crate::proxy::PrintBackendProxy::get_all_options()`].
+    #[cfg(feature = "zbus-backend")]
+    pub fn from_dbus(raw: Vec<crate::proxy::RawOption>) -> Self {
+        let options = raw
+            .into_iter()
+            .map(|r| OptionInfo {
+                name: r.option_name,
+                group: r.group_name,
+                default_value: r.default_value,
+                supported_values: r.supported_values.into_iter().map(|(s,)| s).collect(),
+            })
+            .collect();
         Self { options }
     }
 
-    /// Number of options in the collection.
+    /// Returns the number of options in this collection.
     #[inline]
     pub fn len(&self) -> usize {
         self.options.len()
     }
 
-    /// `true` when the collection is empty.
+    /// Returns `true` if this collection has no options.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.options.is_empty()
     }
 
-    /// Returns the option with the given name, if any.
+    /// Finds an option by name (linear search).
     pub fn get(&self, name: &str) -> Option<&OptionInfo> {
         self.options.iter().find(|o| o.name == name)
     }
 
-    /// Iterates over every option.
+    /// Returns an iterator over all options.
     pub fn iter(&self) -> impl Iterator<Item = &OptionInfo> {
         self.options.iter()
     }
 }
 
-/// Copies one `cpdb_option_t` into an owned [`OptionInfo`].
-///
-/// # Safety
-/// `opt` must be a valid pointer into a live `cpdb_option_t` whose string
-/// fields are NUL-terminated and whose `supported_values` array (if any)
-/// has at least `num_supported` valid entries.
-unsafe fn option_info_from_raw(opt: *mut ffi::cpdb_option_t) -> OptionInfo {
-    let name = unsafe { util::cstr_to_string((*opt).option_name) }.unwrap_or_default();
-    let default_value = unsafe { util::cstr_to_string((*opt).default_value) }.unwrap_or_default();
-    let group = unsafe { util::cstr_to_string((*opt).group_name) }.unwrap_or_default();
-
-    let mut supported_values: Vec<String> =
-        Vec::with_capacity(unsafe { (*opt).num_supported } as usize);
-
-    let arr = unsafe { (*opt).supported_values };
-    let count = unsafe { (*opt).num_supported };
-    if !arr.is_null() && count > 0 {
-        for i in 0..(count as usize) {
-            let s_ptr = unsafe { *arr.add(i) };
-            if !s_ptr.is_null()
-                && let Ok(s) = unsafe { util::cstr_to_string(s_ptr) }
-            {
-                supported_values.push(s);
-            }
-        }
-    }
-
-    OptionInfo {
-        name,
-        default_value,
-        group,
-        supported_values,
-    }
-}
+// ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(feature = "ffi")]
+    #[test]
+    fn null_pointer_returns_null_pointer_error() {
+        let result = unsafe { OptionsCollection::from_raw(std::ptr::null_mut()) };
+        assert!(
+            matches!(result, Err(CpdbError::NullPointer)),
+            "expected NullPointer, got {:?}",
+            result
+        );
+    }
+
+    #[cfg(feature = "ffi")]
     #[test]
     fn null_table_returns_empty_collection() {
         let opts = ffi::cpdb_options_t {
@@ -147,9 +196,10 @@ mod tests {
             count: 0,
             media_count: 0,
         };
-        let raw = NonNull::from(&opts).cast::<ffi::cpdb_options_t>();
-        let result = unsafe { OptionsCollection::from_raw(raw) };
-        assert!(result.is_empty());
+        let result =
+            unsafe { OptionsCollection::from_raw(&opts as *const _ as *mut ffi::cpdb_options_t) };
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[test]

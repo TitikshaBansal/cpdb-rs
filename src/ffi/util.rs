@@ -1,7 +1,7 @@
 //! Small FFI utilities shared by the higher-level modules.
 
+use super::bindings as ffi;
 use crate::error::{CpdbError, Result};
-use crate::ffi;
 use libc::c_char;
 use std::ffi::{CStr, CString};
 

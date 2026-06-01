@@ -11,10 +11,10 @@
 //! cpdb-libs does not lock internally. If you need concurrent access,
 //! wrap the frontend in a [`std::sync::Mutex`].
 
-use crate::callbacks::{self, PrinterUpdate};
+use super::bindings as ffi;
+use super::callbacks::{self, PrinterUpdate};
+use super::printer::Printer;
 use crate::error::{CpdbError, Result};
-use crate::ffi;
-use crate::printer::Printer;
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;

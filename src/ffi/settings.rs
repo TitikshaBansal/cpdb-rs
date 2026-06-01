@@ -1,7 +1,7 @@
 //! Safe wrappers around `cpdb_settings_t`, `cpdb_options_t`, and `cpdb_media_t`.
 
+use super::bindings as ffi;
 use crate::error::{CpdbError, Result};
-use crate::ffi;
 use std::ffi::CString;
 use std::ptr::NonNull;
 

@@ -19,14 +19,61 @@ targets = ["x86_64-unknown-linux-gnu"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 thiserror = "2.0"
 log = "0.4"
-glib-sys = "0.22"
+glib-sys = { version = "0.22", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+zbus = { version = "5.15.0", default-features = false, features = [
+    "tokio",
+], optional = true }
+futures-util = "0.3"
 
 [build-dependencies]
-bindgen = "0.72"
-pkg-config = "0.3"
+bindgen = { version = "0.72", optional = true }
+pkg-config = { version = "0.3", optional = true }
+
+[features]
+default = ["zbus-backend"]
+ffi = ["dep:libc", "dep:glib-sys", "dep:bindgen", "dep:pkg-config"]
+zbus-backend = ["dep:zbus"]
 
 [dev-dependencies]
 tempfile = "3.27"
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[[example]]
+name = "ffi_basic_usage"
+path = "examples/ffi_basic_usage.rs"
+required-features = ["ffi"]
+
+[[example]]
+name = "ffi_cli_printer_manager"
+path = "examples/ffi_cli_printer_manager.rs"
+required-features = ["ffi"]
+
+[[example]]
+name = "cpdb_text_frontend"
+path = "examples/cpdb-text-frontend.rs"
+required-features = ["ffi"]
+
+[[example]]
+name = "zbus_test"
+path = "examples/zbus_test.rs"
+required-features = ["zbus-backend"]
+
+[[example]]
+name = "test_filtering"
+path = "examples/test_filtering.rs"
+required-features = ["zbus-backend"]
+
+[[example]]
+name = "test_translations"
+path = "examples/test_translations.rs"
+required-features = ["zbus-backend"]
+
+[[example]]
+name = "test_print_job"
+path = "examples/test_print_job.rs"
+required-features = ["zbus-backend"]
